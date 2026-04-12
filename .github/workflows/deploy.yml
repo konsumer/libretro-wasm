@@ -22,14 +22,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install wasi-sdk
-        env:
-          WASI_VERSION: "24.0"
-        run: |
-          ARCHIVE="wasi-sdk-${WASI_VERSION}-linux.tar.xz"
-          curl -L -o "$ARCHIVE" "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_VERSION}/$ARCHIVE"
-          sudo tar -xJf "$ARCHIVE" -C /opt
-          sudo ln -sf "/opt/wasi-sdk-${WASI_VERSION}" /opt/wasi-sdk
-          echo "WASI_SDK_PATH=/opt/wasi-sdk" >> "$GITHUB_ENV"
+        uses: konsumer/install-wasi-sdk@v1
+        with:
+          version: "24"
 
       - name: Build WASM cores
         run: make dist/minicore.wasm dist/quicknes.wasm
