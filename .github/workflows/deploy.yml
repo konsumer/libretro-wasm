@@ -31,9 +31,8 @@ jobs:
 
       - name: Assemble site bundle
         run: |
-          mkdir -p web/libretro web/cores
-          cp -R src/. web/libretro/
-          cp -R dist/. web/cores/
+          mv src web/libretro
+          mv dist web/cores:
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
