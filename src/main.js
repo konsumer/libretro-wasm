@@ -1,5 +1,5 @@
-import { LibretroHost } from "./libretro/libretro-host.js";
-import { createWasiImports } from "./libretro/wasi.js";
+import { LibretroHost } from "./libretro-host.js";
+import { createWasiImports } from "./wasi.js";
 
 const RETRO_ENV = {
   SET_ROTATION: 1,
