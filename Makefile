@@ -5,7 +5,7 @@ CC := $(WASI_SDK_PATH)/bin/clang
 CXX := $(WASI_SDK_PATH)/bin/clang++
 
 CORE_SRC := core/minicore.c
-CORE_OUT := dist/minicore.wasm
+CORE_OUT := src/cores/minicore.wasm
 
 WASI_TARGET_FLAGS := --target=wasm32-wasip1 --sysroot=$(WASI_SYSROOT)
 
@@ -46,7 +46,7 @@ override CORE_DIR := core
 endif
 
 QUICKNES_OBJS := $(patsubst $(QUICKNES_DIR)/%.cpp,$(QUICKNES_BUILD_DIR)/%.o,$(QUICKNES_SOURCES))
-QUICKNES_OUT := dist/quicknes.wasm
+QUICKNES_OUT := src/cores/quicknes.wasm
 QUICKNES_DEFINES := -D__LIBRETRO__ -DHAVE_STDINT_H -DHAVE_INTTYPES_H -DHAVE_NO_LANGEXTRA -DNDEBUG
 
 ALL_CORES := $(CORE_OUT)
@@ -58,13 +58,13 @@ endif
 
 all: $(ALL_CORES)
 
-dist:
-	mkdir -p dist
+src/cores:
+	mkdir -p src/cores
 
-$(CORE_OUT): $(CORE_SRC) core/libretro.h | dist
+$(CORE_OUT): $(CORE_SRC) core/libretro.h | src/cores
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(EXPORT_FLAGS)
 
-$(QUICKNES_OUT): $(QUICKNES_OBJS) | dist
+$(QUICKNES_OUT): $(QUICKNES_OBJS) | src/cores
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(EXPORT_FLAGS)
 
 $(QUICKNES_BUILD_DIR)/%.o: $(QUICKNES_DIR)/%.cpp
@@ -72,4 +72,4 @@ $(QUICKNES_BUILD_DIR)/%.o: $(QUICKNES_DIR)/%.cpp
 	$(CXX) $(CXXFLAGS) $(QUICKNES_DEFINES) $(QUICKNES_INCFLAGS) -c $< -o $@
 
 clean:
-	rm -rf dist build
+	rm -rf build src/cores

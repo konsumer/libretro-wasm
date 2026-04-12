@@ -27,17 +27,12 @@ jobs:
           version: "24"
 
       - name: Build WASM cores
-        run: make dist/minicore.wasm dist/quicknes.wasm
-
-      - name: Assemble site bundle
-        run: |
-          mv src web/libretro
-          mv dist web/cores
+        run: make
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: src
 
   deploy:
     needs: build
