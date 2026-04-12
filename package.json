@@ -1,0 +1,16 @@
+{
+  "name": "libretro-wasm-host",
+  "version": "0.1.0",
+  "description": "Minimal libretro frontend capable of loading WebAssembly cores",
+  "type": "module",
+  "main": "src/libretro-host.js",
+  "exports": {
+    ".": "./src/libretro-host.js"
+  },
+  "keywords": [
+    "libretro",
+    "wasm",
+    "frontend"
+  ],
+  "license": "MIT"
+}

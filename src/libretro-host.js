@@ -1,0 +1,360 @@
+import { readFile } from "node:fs/promises";
+
+const PAGE_SIZE = 65536;
+const RETRO_HW_FRAME_BUFFER_VALID = 0xffffffff >>> 0;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+const defaultCallbacks = {
+  environment: () => false,
+  videoRefresh: () => {},
+  audioSample: () => {},
+  audioSampleBatch: () => 0,
+  inputPoll: () => {},
+  inputState: () => 0,
+};
+
+const mergeImports = (...sources) => {
+  const merged = {};
+  for (const source of sources) {
+    if (!source) continue;
+    for (const [moduleName, moduleImports] of Object.entries(source)) {
+      merged[moduleName] ??= {};
+      Object.assign(merged[moduleName], moduleImports);
+    }
+  }
+  return merged;
+};
+
+/**
+ * Minimal libretro frontend for WebAssembly cores.
+ */
+export class LibretroHost {
+  /**
+   * @param {object} [options]
+   * @param {object} [options.imports] - Import object merged when instantiating the core.
+   * @param {object} [options.callbacks] - Partial override of callback handlers.
+   */
+  constructor(options = {}) {
+    this.imports = options.imports ?? {};
+    this.callbacks = { ...defaultCallbacks, ...(options.callbacks ?? {}) };
+
+    this.instance = null;
+    this.module = null;
+    this.exports = null;
+    this.memory = null;
+    this.table = null;
+    this._allocCursor = 0;
+  }
+
+  /**
+   * Convenience helper that instantiates a core from disk.
+   * @param {string} wasmPath
+   * @param {object} [options]
+   */
+  static async fromFile(wasmPath, options = {}) {
+    const source = await readFile(wasmPath);
+    const host = new LibretroHost(options);
+    await host.load(source, options);
+    return host;
+  }
+
+  /**
+   * Instantiates a libretro core from any BufferSource.
+   * @param {BufferSource | WebAssembly.Module} coreSource
+   * @param {object} [options]
+   * @param {object} [options.imports]
+   */
+  async load(coreSource, options = {}) {
+    const mergedImports = mergeImports(this.imports, options.imports);
+
+    let module;
+    let instance;
+
+    if (coreSource instanceof WebAssembly.Module) {
+      module = coreSource;
+      instance = await WebAssembly.instantiate(module, mergedImports);
+    } else {
+      const result = await WebAssembly.instantiate(coreSource, mergedImports);
+      module = result.module;
+      instance = result.instance;
+    }
+
+    this.imports = mergedImports;
+    this.module = module;
+    this.instance = instance;
+    this.exports = instance.exports;
+    this.memory = this._resolveMemory();
+    this.table = this._resolveTable();
+    this._initAllocator();
+    this._registerLibretroCallbacks();
+  }
+
+  /**
+   * Updates callbacks at runtime.
+   * @param {object} overrides
+   */
+  setCallbacks(overrides) {
+    this.callbacks = { ...this.callbacks, ...overrides };
+  }
+
+  /**
+   * Calls retro_init if exported.
+   */
+  initializeCore() {
+    this._assertExports();
+    if (typeof this.exports.retro_init === "function") {
+      this.exports.retro_init();
+    }
+  }
+
+  /**
+   * Calls retro_deinit if exported.
+   */
+  shutdownCore() {
+    if (this.exports && typeof this.exports.retro_deinit === "function") {
+      this.exports.retro_deinit();
+    }
+  }
+
+  /**
+   * Loads a game into the core.
+   * @param {{ path?: string, data?: Uint8Array|ArrayBufferView|ArrayBuffer, meta?: string }} [game]
+   */
+  loadGame(game = undefined) {
+    this._assertExports();
+    if (typeof this.exports.retro_load_game !== "function") {
+      throw new Error("Core does not export retro_load_game");
+    }
+
+    if (!game) {
+      return Boolean(this.exports.retro_load_game(0));
+    }
+
+    const pathPtr = game.path ? this._writeCString(game.path) : 0;
+    const dataBytes = this._normalizeBuffer(game.data ?? new Uint8Array());
+    const dataPtr = dataBytes.byteLength ? this._writeBytes(dataBytes) : 0;
+    const size = dataBytes.byteLength >>> 0;
+    const metaPtr = game.meta ? this._writeCString(game.meta) : 0;
+
+    const structPtr = this._alloc(16, 4);
+    this._writeU32(structPtr, pathPtr);
+    this._writeU32(structPtr + 4, dataPtr);
+    this._writeU32(structPtr + 8, size);
+    this._writeU32(structPtr + 12, metaPtr);
+
+    return Boolean(this.exports.retro_load_game(structPtr));
+  }
+
+  /**
+   * Calls retro_unload_game if exported.
+   */
+  unloadGame() {
+    if (this.exports && typeof this.exports.retro_unload_game === "function") {
+      this.exports.retro_unload_game();
+    }
+  }
+
+  /**
+   * Executes a single frame (retro_run).
+   */
+  runFrame() {
+    this._assertExports();
+    if (typeof this.exports.retro_run !== "function") {
+      throw new Error("Core does not export retro_run");
+    }
+    this.exports.retro_run();
+  }
+
+  /**
+   * Reads a null-terminated UTF-8 string from the core memory.
+   * @param {number} ptr
+   */
+  readCString(ptr) {
+    if (!ptr) return "";
+    const bytes = new Uint8Array(this.memory.buffer);
+    let end = ptr;
+    while (end < bytes.length && bytes[end] !== 0) {
+      end += 1;
+    }
+    return textDecoder.decode(bytes.subarray(ptr, end));
+  }
+
+  /**
+   * Allocates raw bytes inside the core memory.
+   * @param {number} size
+   * @param {number} [alignment=8]
+   */
+  _alloc(size, alignment = 8) {
+    if (typeof this.exports.malloc === "function") {
+      const ptr = this.exports.malloc(size);
+      if (!ptr) throw new Error("Core malloc returned 0");
+      return ptr >>> 0;
+    }
+
+    const alignedCursor = this._align(this._allocCursor, alignment);
+    const next = alignedCursor + size;
+    this._ensureCapacity(next);
+    this._allocCursor = next;
+    return alignedCursor >>> 0;
+  }
+
+  _align(value, alignment) {
+    const mask = alignment - 1;
+    return (value + mask) & ~mask;
+  }
+
+  _writeBytes(bytes) {
+    const buffer = this._normalizeBuffer(bytes);
+    const ptr = this._alloc(buffer.byteLength || 1, 1);
+    new Uint8Array(this.memory.buffer, ptr, buffer.byteLength).set(buffer);
+    return ptr;
+  }
+
+  _writeCString(text) {
+    const encoded = textEncoder.encode(text);
+    const bytes = new Uint8Array(encoded.length + 1);
+    bytes.set(encoded, 0);
+    bytes[encoded.length] = 0;
+    return this._writeBytes(bytes);
+  }
+
+  _writeU32(ptr, value) {
+    new DataView(this.memory.buffer).setUint32(ptr, value >>> 0, true);
+  }
+
+  _normalizeBuffer(buffer) {
+    if (!buffer) return new Uint8Array();
+    if (buffer instanceof Uint8Array) return buffer;
+    if (ArrayBuffer.isView(buffer)) {
+      return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    }
+    if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer);
+    throw new TypeError("Unsupported buffer type");
+  }
+
+  _resolveMemory() {
+    const exported = this.instance.exports.memory;
+    if (exported instanceof WebAssembly.Memory) {
+      return exported;
+    }
+    const imported = this.imports.env?.memory;
+    if (imported instanceof WebAssembly.Memory) {
+      return imported;
+    }
+    throw new Error("Unable to locate linear memory for core");
+  }
+
+  _resolveTable() {
+    const exported = this.instance.exports.__indirect_function_table;
+    if (exported instanceof WebAssembly.Table) {
+      return exported;
+    }
+    const imported = this.imports.env?.__indirect_function_table;
+    if (imported instanceof WebAssembly.Table) {
+      return imported;
+    }
+    throw new Error("Unable to locate indirect function table");
+  }
+
+  _initAllocator() {
+    if (typeof this.exports.__heap_base === "object" && this.exports.__heap_base instanceof WebAssembly.Global) {
+      this._allocCursor = this.exports.__heap_base.value;
+      return;
+    }
+    // Fallback to the end of the current memory buffer.
+    this._allocCursor = this.memory.buffer.byteLength;
+  }
+
+  _ensureCapacity(bytesNeeded) {
+    const currentPages = this.memory.buffer.byteLength / PAGE_SIZE;
+    const requiredPages = Math.ceil(bytesNeeded / PAGE_SIZE);
+    if (requiredPages > currentPages) {
+      this.memory.grow(requiredPages - currentPages);
+    }
+  }
+
+  _registerLibretroCallbacks() {
+    if (!this.exports) return;
+
+    const register = (name, handler) => {
+      const setter = this.exports[name];
+      if (typeof setter !== "function") return;
+      const slot = this._addHostFunction(handler);
+      setter(slot >>> 0);
+    };
+
+    register("retro_set_environment", (cmd, dataPtr) => this._handleEnvironment(cmd >>> 0, dataPtr >>> 0));
+    register("retro_set_video_refresh", (dataPtr, width, height, pitch) =>
+      this._handleVideoRefresh(dataPtr >>> 0, width >>> 0, height >>> 0, pitch >>> 0)
+    );
+    register("retro_set_audio_sample", (left, right) => this._handleAudioSample(left | 0, right | 0));
+    register("retro_set_audio_sample_batch", (dataPtr, frames) =>
+      this._handleAudioSampleBatch(dataPtr >>> 0, frames >>> 0)
+    );
+    register("retro_set_input_poll", () => this._handleInputPoll());
+    register("retro_set_input_state", (port, device, index, id) =>
+      this._handleInputState(port >>> 0, device >>> 0, index >>> 0, id >>> 0)
+    );
+  }
+
+  _addHostFunction(fn) {
+    if (!(this.table instanceof WebAssembly.Table)) {
+      throw new Error("Function table is not available");
+    }
+    const slot = this.table.length;
+    this.table.grow(1);
+    this.table.set(slot, fn);
+    return slot;
+  }
+
+  _handleEnvironment(cmd, dataPtr) {
+    const result = this.callbacks.environment?.({ cmd, dataPtr, host: this }) ?? false;
+    return result ? 1 : 0;
+  }
+
+  _handleVideoRefresh(dataPtr, width, height, pitch) {
+    const cb = this.callbacks.videoRefresh;
+    if (!cb) return;
+    if (!dataPtr) {
+      cb(null, width, height, pitch, this);
+      return;
+    }
+    if (dataPtr === RETRO_HW_FRAME_BUFFER_VALID) {
+      cb("hw", width, height, pitch, this);
+      return;
+    }
+    const frameSize = pitch * height;
+    const view = new Uint8Array(this.memory.buffer, dataPtr, frameSize);
+    cb(view, width, height, pitch, this);
+  }
+
+  _handleAudioSample(left, right) {
+    this.callbacks.audioSample?.(left, right, this);
+  }
+
+  _handleAudioSampleBatch(dataPtr, frames) {
+    const cb = this.callbacks.audioSampleBatch;
+    if (!cb || !frames) return 0;
+    const samples = new Int16Array(this.memory.buffer, dataPtr, frames * 2);
+    const result = cb(samples, frames, this);
+    return result | 0;
+  }
+
+  _handleInputPoll() {
+    this.callbacks.inputPoll?.(this);
+  }
+
+  _handleInputState(port, device, index, id) {
+    const value = this.callbacks.inputState?.({ port, device, index, id, host: this }) ?? 0;
+    return value | 0;
+  }
+
+  _assertExports() {
+    if (!this.exports) {
+      throw new Error("Core not instantiated");
+    }
+  }
+}
+
+export { RETRO_HW_FRAME_BUFFER_VALID };
