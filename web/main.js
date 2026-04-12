@@ -1,5 +1,5 @@
-import { LibretroHost } from "/libretro/libretro-host.js";
-import { createWasiImports } from "/libretro/wasi.js";
+import { LibretroHost } from "./libretro/libretro-host.js";
+import { createWasiImports } from "./libretro/wasi.js";
 
 const RETRO_ENV = {
   SET_ROTATION: 1,
@@ -90,7 +90,7 @@ resetBtn.addEventListener("click", () => {
 
 async function bootstrap() {
   updateStatus("Fetching QuickNES core…");
-  const response = await fetch("/cores/quicknes.wasm");
+  const response = await fetch("./cores/quicknes.wasm");
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} when fetching core`);
   }
