@@ -31,15 +31,14 @@ jobs:
 
       - name: Assemble site bundle
         run: |
-          mkdir -p site/libretro site/cores
-          cp -R examples/browser/. site/
-          cp -R src/. site/libretro/
-          cp -R dist/. site/cores/
+          mkdir -p web/libretro web/cores
+          cp -R src/. web/libretro/
+          cp -R dist/. web/cores/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: web
 
   deploy:
     needs: build
