@@ -1,9 +1,19 @@
-import { readFile } from "node:fs/promises";
-
 const PAGE_SIZE = 65536;
 const RETRO_HW_FRAME_BUFFER_VALID = 0xffffffff >>> 0;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+let nodeReadFile = null;
+
+const readFileFromNode = async (wasmPath) => {
+  if (typeof process === "undefined" || !process.versions?.node) {
+    throw new Error("LibretroHost.fromFile is only available in Node.js environments");
+  }
+  if (!nodeReadFile) {
+    ({ readFile: nodeReadFile } = await import("node:fs/promises"));
+  }
+  return nodeReadFile(wasmPath);
+};
 
 const defaultCallbacks = {
   environment: () => false,
@@ -13,6 +23,36 @@ const defaultCallbacks = {
   inputPoll: () => {},
   inputState: () => 0,
 };
+
+const TABLE_ELEMENT_TYPE = (() => {
+  try {
+    // Some engines only accept "anyfunc" while newer ones prefer "funcref".
+    new WebAssembly.Table({ element: "funcref", initial: 1 });
+    return "funcref";
+  } catch {
+    return "anyfunc";
+  }
+})();
+
+const DEFAULT_TABLE_MIN = 2048;
+
+const CALLBACK_SIGNATURES = {
+  retro_set_environment: { parameters: ["i32", "i32"], results: ["i32"] },
+  retro_set_video_refresh: { parameters: ["i32", "i32", "i32", "i32"], results: [] },
+  retro_set_audio_sample: { parameters: ["i32", "i32"], results: [] },
+  retro_set_audio_sample_batch: { parameters: ["i32", "i32"], results: ["i32"] },
+  retro_set_input_poll: { parameters: [], results: [] },
+  retro_set_input_state: { parameters: ["i32", "i32", "i32", "i32"], results: ["i32"] },
+};
+
+const wasmTypeCodes = {
+  i32: 0x7f,
+  i64: 0x7e,
+  f32: 0x7d,
+  f64: 0x7c,
+};
+
+const thunkModuleCache = new Map();
 
 const mergeImports = (...sources) => {
   const merged = {};
@@ -53,7 +93,7 @@ export class LibretroHost {
    * @param {object} [options]
    */
   static async fromFile(wasmPath, options = {}) {
-    const source = await readFile(wasmPath);
+    const source = await readFileFromNode(wasmPath);
     const host = new LibretroHost(options);
     await host.load(source, options);
     return host;
@@ -69,16 +109,15 @@ export class LibretroHost {
     const mergedImports = mergeImports(this.imports, options.imports);
 
     let module;
-    let instance;
-
     if (coreSource instanceof WebAssembly.Module) {
       module = coreSource;
-      instance = await WebAssembly.instantiate(module, mergedImports);
     } else {
-      const result = await WebAssembly.instantiate(coreSource, mergedImports);
-      module = result.module;
-      instance = result.instance;
+      const normalized = this._normalizeBuffer(coreSource);
+      module = await WebAssembly.compile(normalized);
     }
+
+    this._ensureTableImport(mergedImports, module);
+    const instance = await WebAssembly.instantiate(module, mergedImports);
 
     this.imports = mergedImports;
     this.module = module;
@@ -86,6 +125,7 @@ export class LibretroHost {
     this.exports = instance.exports;
     this.memory = this._resolveMemory();
     this.table = this._resolveTable();
+    this._callConstructors();
     this._initAllocator();
     this._registerLibretroCallbacks();
   }
@@ -274,13 +314,49 @@ export class LibretroHost {
     }
   }
 
+  _ensureTableImport(imports, module) {
+    imports.env ??= {};
+
+    let table = imports.env.__indirect_function_table;
+    if (table instanceof WebAssembly.Table) {
+      return table;
+    }
+
+    if (!module || typeof WebAssembly.Module.imports !== "function") {
+      return null;
+    }
+
+    const tableImport = WebAssembly.Module.imports(module).find(
+      (entry) => entry.kind === "table" && (entry.name === "__indirect_function_table" || entry.field === "__indirect_function_table")
+    );
+
+    if (!tableImport) {
+      return null;
+    }
+
+    const type = tableImport.type ?? {};
+    const minRequired = Math.max(type.minimum ?? 0, DEFAULT_TABLE_MIN);
+    const desc = {
+      element: type.element ?? TABLE_ELEMENT_TYPE,
+      initial: minRequired,
+    };
+    if (typeof type.maximum === "number") {
+      desc.maximum = Math.max(type.maximum, minRequired);
+    }
+
+    table = new WebAssembly.Table(desc);
+    imports.env.__indirect_function_table = table;
+    return table;
+  }
+
   _registerLibretroCallbacks() {
     if (!this.exports) return;
 
     const register = (name, handler) => {
       const setter = this.exports[name];
       if (typeof setter !== "function") return;
-      const slot = this._addHostFunction(handler);
+      const signature = CALLBACK_SIGNATURES[name] ?? null;
+      const slot = this._addHostFunction(handler, signature);
       setter(slot >>> 0);
     };
 
@@ -298,14 +374,22 @@ export class LibretroHost {
     );
   }
 
-  _addHostFunction(fn) {
+  _addHostFunction(fn, signature = null) {
     if (!(this.table instanceof WebAssembly.Table)) {
       throw new Error("Function table is not available");
     }
-    const slot = this.table.length;
-    this.table.grow(1);
-    this.table.set(slot, fn);
+    const slot = this.table.grow(1);
+    const callable = this._wrapHostFunction(fn, signature);
+    this.table.set(slot, callable);
     return slot;
+  }
+
+  _wrapHostFunction(fn, signature) {
+    if (!signature) {
+      return fn;
+    }
+    const wasmFn = createHostThunk(fn, signature);
+    return wasmFn ?? fn;
   }
 
   _handleEnvironment(cmd, dataPtr) {
@@ -355,6 +439,143 @@ export class LibretroHost {
       throw new Error("Core not instantiated");
     }
   }
+
+  _callConstructors() {
+    const ctor = this.exports?.__wasm_call_ctors || this.exports?._initialize;
+    if (typeof ctor === "function") {
+      ctor();
+    }
+  }
+
 }
 
 export { RETRO_HW_FRAME_BUFFER_VALID };
+
+function createHostThunk(fn, signature) {
+  if (typeof WebAssembly.Function === "function") {
+    try {
+      return new WebAssembly.Function(signature, fn);
+    } catch (error) {
+      console.warn("WebAssembly.Function construction failed; falling back to thunk module", error);
+    }
+  }
+
+  try {
+    const module = getThunkModule(signature);
+    const instance = new WebAssembly.Instance(module, { host: { fn } });
+    return instance.exports.thunk;
+  } catch (error) {
+    console.error("Unable to fabricate WASM thunk for host callback", error);
+    return null;
+  }
+}
+
+function getThunkModule(signature) {
+  const key = `${signature.parameters?.join(",") ?? ""}->${signature.results?.join(",") ?? ""}`;
+  if (thunkModuleCache.has(key)) {
+    return thunkModuleCache.get(key);
+  }
+  const bytes = buildThunkBinary(signature);
+  const module = new WebAssembly.Module(bytes);
+  thunkModuleCache.set(key, module);
+  return module;
+}
+
+function buildThunkBinary(signature) {
+  const params = signature.parameters ?? [];
+  const results = signature.results ?? [];
+  const bytes = [];
+
+  const pushBytes = (array) => {
+    bytes.push(...array);
+  };
+
+  const writeName = (name, target) => {
+    const data = textEncoder.encode(name);
+    writeU32(target, data.length);
+    for (const byte of data) {
+      target.push(byte);
+    }
+  };
+
+  const pushSection = (id, payload) => {
+    bytes.push(id);
+    const size = [];
+    writeU32(size, payload.length);
+    bytes.push(...size, ...payload);
+  };
+
+  pushBytes([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+
+  const typeEntry = [0x60];
+  const paramVec = [];
+  writeU32(paramVec, params.length);
+  for (const param of params) {
+    paramVec.push(wasmTypeCodes[param] ?? wasmTypeCodes.i32);
+  }
+  typeEntry.push(...paramVec);
+  const resultVec = [];
+  writeU32(resultVec, results.length);
+  for (const result of results) {
+    resultVec.push(wasmTypeCodes[result] ?? wasmTypeCodes.i32);
+  }
+  typeEntry.push(...resultVec);
+  const typePayload = [];
+  writeU32(typePayload, 1);
+  typePayload.push(...typeEntry);
+  pushSection(1, typePayload);
+
+  const importEntry = [];
+  writeName("host", importEntry);
+  writeName("fn", importEntry);
+  importEntry.push(0x00);
+  writeU32(importEntry, 0);
+  const importPayload = [];
+  writeU32(importPayload, 1);
+  importPayload.push(...importEntry);
+  pushSection(2, importPayload);
+
+  const funcPayload = [];
+  writeU32(funcPayload, 1);
+  writeU32(funcPayload, 0);
+  pushSection(3, funcPayload);
+
+  const exportEntry = [];
+  writeName("thunk", exportEntry);
+  exportEntry.push(0x00);
+  writeU32(exportEntry, 1);
+  const exportPayload = [];
+  writeU32(exportPayload, 1);
+  exportPayload.push(...exportEntry);
+  pushSection(7, exportPayload);
+
+  const instructions = [];
+  params.forEach((_, index) => {
+    instructions.push(0x20);
+    writeU32(instructions, index);
+  });
+  instructions.push(0x10);
+  writeU32(instructions, 0);
+  instructions.push(0x0b);
+
+  const body = [0x00, ...instructions];
+  const codeEntry = [];
+  writeU32(codeEntry, body.length);
+  codeEntry.push(...body);
+  const codePayload = [];
+  writeU32(codePayload, 1);
+  codePayload.push(...codeEntry);
+  pushSection(10, codePayload);
+
+  return new Uint8Array(bytes);
+}
+
+function writeU32(target, value) {
+  let remaining = value >>> 0;
+  do {
+    let byte = remaining & 0x7f;
+    remaining >>>= 7;
+    if (remaining) byte |= 0x80;
+    target.push(byte);
+  } while (remaining);
+}

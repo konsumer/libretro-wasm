@@ -12,5 +12,9 @@
     "wasm",
     "frontend"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "build": "make",
+    "start": "npx -y live-server examples/browser --mount=/libretro:src --mount=/cores:dist"
+  }
 }

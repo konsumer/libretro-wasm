@@ -1,0 +1,58 @@
+name: Deploy Browser Demo
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install wasi-sdk
+        env:
+          WASI_VERSION: "24.0"
+        run: |
+          ARCHIVE="wasi-sdk-${WASI_VERSION}-linux.tar.gz"
+          curl -L -o "$ARCHIVE" "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_VERSION}/$ARCHIVE"
+          sudo tar -xzf "$ARCHIVE" -C /opt
+          sudo ln -sf "/opt/wasi-sdk-${WASI_VERSION}" /opt/wasi-sdk
+          echo "WASI_SDK_PATH=/opt/wasi-sdk" >> "$GITHUB_ENV"
+
+      - name: Build WASM cores
+        run: make dist/minicore.wasm dist/quicknes.wasm
+
+      - name: Assemble site bundle
+        run: |
+          mkdir -p site/libretro site/cores
+          cp -R examples/browser/. site/
+          cp -R src/. site/libretro/
+          cp -R dist/. site/cores/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
