@@ -25,9 +25,9 @@ jobs:
         env:
           WASI_VERSION: "24.0"
         run: |
-          ARCHIVE="wasi-sdk-${WASI_VERSION}-linux.tar.gz"
+          ARCHIVE="wasi-sdk-${WASI_VERSION}-linux.tar.xz"
           curl -L -o "$ARCHIVE" "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_VERSION}/$ARCHIVE"
-          sudo tar -xzf "$ARCHIVE" -C /opt
+          sudo tar -xJf "$ARCHIVE" -C /opt
           sudo ln -sf "/opt/wasi-sdk-${WASI_VERSION}" /opt/wasi-sdk
           echo "WASI_SDK_PATH=/opt/wasi-sdk" >> "$GITHUB_ENV"
 
