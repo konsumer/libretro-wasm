@@ -32,7 +32,7 @@ jobs:
       - name: Assemble site bundle
         run: |
           mv src web/libretro
-          mv dist web/cores:
+          mv dist web/cores
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
