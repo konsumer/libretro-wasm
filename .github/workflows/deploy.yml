@@ -32,7 +32,7 @@ jobs:
       - name: Copy example cores to webroot
         run: |
           mkdir -p web/cores
-          cp build/cores/*.wasm web/cores
+          cp build/cores/cores/*.wasm web/cores
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

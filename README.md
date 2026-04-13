@@ -1,18 +1,11 @@
 # libretro-wasm host
 
-Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js. This repository provides:
+Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js and native. This repository provides:
 
 - **`web/libretro-host.js`** – a thin frontend that instantiates a core, feeds it games, and surfaces video/audio/input callbacks.
 - **`cores/`** – CMake targets that build the in-tree `minicore` sample and the upstream QuickNES core as `.wasm` binaries.
 - **`web/`** – a self-contained demo UI that loads `build/cores/quicknes.wasm`, streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
-
-## Repository layout
-
-| Path | Purpose |
-| --- | --- |
-| `cores/` | All WASI core sources plus `libretro_shim.c`, a bridge that connects libretro callbacks to JS imports without manual table hacking. |
-| `web/` | Browser demo (`index.html`, `main.js`, `libretro-host.js`, `wasi.js`). No bundler is required. |
-| `native/` | Placeholder for future desktop frontends. |
+- **`native/`** - a native runtime that can load the wasm core, and play it using raylib
 
 ## Requirements
 
@@ -26,12 +19,23 @@ Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and 
 npm run cores
 ```
 
-Artifacts live under `build/cores/`. The QuickNES target is fetched automatically with `FetchContent`, so no Git submodules are needed.
+Artifacts live under `build/cores/cores/`. The QuickNES target is fetched automatically with `FetchContent`, so no Git submodules are needed.
+
+## Building the native host
+
+Artifacts live under `build/native/`.
+
+```bash
+npm run native
+```
+
 
 ## Running the browser demo
 
+This builds the cores, and runs a local dev-server.
+
 ```bash
-npm run start   # builds the cores, then serves web/ with live-server (mounts build/cores)
+npm run start
 ```
 
 Visit the printed URL, load a `.nes` file, and the UI will drive the real QuickNES libretro core directly in the browser.
