@@ -7,6 +7,14 @@ on:
   release:
     types:
       - published
+  workflow_dispatch:
+    inputs:
+      release_mode:
+        description: "Run release packaging steps"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
 
 permissions:
   contents: write
@@ -20,6 +28,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'true') }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -44,7 +54,7 @@ jobs:
           path: web
 
       - name: Upload WASM cores artifact
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: wasm-cores
@@ -64,7 +74,7 @@ jobs:
 
   native-builds:
     needs: build
-    if: github.event_name == 'release'
+    if: needs.build.outputs.should_release == 'true'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -104,6 +114,15 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install llvm -y
 
+      - name: Add LLVM to PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $llvm = "C:\Program Files\LLVM\bin"
+          if (Test-Path $llvm) {
+            Add-Content -Path $env:GITHUB_PATH -Value $llvm
+          }
+
       - name: Set archive metadata
         shell: bash
         run: |
@@ -122,10 +141,10 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
+            export CC=clang-cl
+            export CXX=clang-cl
             cmake -S native -B build/native -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_C_COMPILER=clang-cl \
-              -DCMAKE_CXX_COMPILER=clang-cl \
               -DWAMR_BUILD_SIMD=0 \
               -DWAMR_BUILD_INVOKE_NATIVE_GENERAL=1
             cmake --build build/native --config Release
@@ -151,7 +170,7 @@ jobs:
 
   publish-release:
     needs: [build, native-builds]
-    if: github.event_name == 'release'
+    if: needs.build.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
