@@ -27,14 +27,6 @@ endif()
 
 include(FetchContent)
 
-if(WIN32)
-  add_compile_definitions(
-    WINAPI_FAMILY=WINAPI_FAMILY_DESKTOP_APP
-    WINAPI_PARTITION_APP=0
-    WINAPI_PARTITION_DESKTOP=1
-  )
-endif()
-
 FetchContent_Declare(
     raylib
     URL https://github.com/raysan5/raylib/archive/refs/tags/5.5.zip
@@ -69,6 +61,9 @@ target_include_directories(libretro_wasm PRIVATE
 )
 
 if(WIN32)
-  target_compile_definitions(vmlib PRIVATE NOMINMAX)
+  target_compile_definitions(vmlib PRIVATE
+    NOMINMAX
+    WINAPI_FAMILY=WINAPI_FAMILY_DESKTOP_APP
+  )
   target_compile_definitions(libretro_wasm PRIVATE NOMINMAX)
 endif()
