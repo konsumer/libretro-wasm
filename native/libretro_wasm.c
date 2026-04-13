@@ -12,7 +12,6 @@
 #include <string.h>
 
 #if defined(_WIN32)
-#include <windows.h>
 #include <direct.h>
 #else
 #include <unistd.h>
@@ -22,7 +21,11 @@
 #include <wasm_export.h>
 
 #if defined(_WIN32) && !defined(PATH_MAX)
-#define PATH_MAX MAX_PATH
+#ifdef _MAX_PATH
+#define PATH_MAX _MAX_PATH
+#else
+#define PATH_MAX 260
+#endif
 #endif
 
 #define MODULE_STACK_SIZE (1024 * 1024 * 2)
