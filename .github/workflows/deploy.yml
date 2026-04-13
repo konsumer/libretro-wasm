@@ -29,10 +29,22 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      should_release: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'true') }}
+      should_release: ${{ steps.release_check.outputs.value }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - id: release_check
+        name: Determine release mode
+        shell: bash
+        run: |
+          MODE="false"
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            MODE="true"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.release_mode || 'false' }}" == "true" ]]; then
+            MODE="true"
+          fi
+          echo "value=$MODE" >> "$GITHUB_OUTPUT"
 
       - name: Install wasi-sdk
         uses: konsumer/install-wasi-sdk@v1
@@ -54,7 +66,7 @@ jobs:
           path: web
 
       - name: Upload WASM cores artifact
-        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_mode == 'true')
+        if: steps.release_check.outputs.value == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: wasm-cores
