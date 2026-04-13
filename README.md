@@ -7,7 +7,8 @@ The idea here is no-recompile wasm libretro cores, that can be used on web or na
 Get a wasm core and native runtime from [releases](https://github.com/konsumer/libretro-wasm/releases).
 
 ```bash
-libretro_wasm quicknes.wasm rom.nes
+libretro_wasm quicknes.wasm rom.nes   # NES via QuickNES
+libretro_wasm gambatte.wasm rom.gb    # Game Boy / Color via Gambatte
 ```
 
 ## Development
@@ -15,8 +16,8 @@ libretro_wasm quicknes.wasm rom.nes
 Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js and native. This repository provides:
 
 - **`web/libretro-host.js`** – a thin frontend that instantiates a core, feeds it games, and surfaces video/audio/input callbacks.
-- **`cores/`** – CMake targets that build the in-tree `minicore` sample and the upstream QuickNES core as `.wasm` binaries.
-- **`web/`** – a self-contained demo UI that loads `build/cores/quicknes.wasm`, streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
+- **`cores/`** – CMake targets that build the in-tree `minicore` sample plus upstream QuickNES (NES) and Gambatte (GB/GBC) cores as `.wasm` binaries.
+- **`web/`** – a self-contained demo UI that loads whichever `.wasm` core you select (QuickNES, Gambatte, etc.), streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
 - **`native/`** - a native runtime that can load the wasm core, and play it using raylib
 
 ## Requirements
@@ -31,7 +32,7 @@ Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and 
 npm run cores
 ```
 
-Artifacts live under `build/cores/cores/`. The QuickNES target is fetched automatically with `FetchContent`, so no Git submodules are needed.
+Artifacts live under `build/cores/cores/`. QuickNES and Gambatte are fetched automatically with `FetchContent`, so no Git submodules are needed.
 
 ## Building the native host
 
@@ -42,6 +43,7 @@ npm run cores   # ensure the WASM cores exist
 npm run native
 
 ./build/native/libretro_wasm build/cores/cores/quicknes.wasm path/to/rom.nes
+./build/native/libretro_wasm build/cores/cores/gambatte.wasm path/to/rom.gb
 ```
 
 ### Native controls
@@ -62,7 +64,7 @@ This builds the cores, and runs a local dev-server.
 npm run start
 ```
 
-Visit the printed URL, load a `.nes` file, and the UI will drive the real QuickNES libretro core directly in the browser.
+Visit the printed URL, pick a core from the dropdown, and load the matching ROM to run the real libretro core directly in the browser.
 
 ## Programmatic usage
 

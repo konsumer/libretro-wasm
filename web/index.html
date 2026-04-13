@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>QuickNES WASI Demo</title>
+  <title>Libretro WASI Demo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -61,6 +61,36 @@
       flex-wrap: wrap;
       gap: 1rem;
       margin: 2rem 0 1rem;
+    }
+
+    .select-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 200px;
+    }
+
+    .select-group span {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-subtle);
+    }
+
+    .select-group select {
+      border: 1px solid rgba(148, 163, 184, 0.4);
+      border-radius: 999px;
+      padding: 0.9rem 1.75rem;
+      font-weight: 600;
+      background: var(--bg-light);
+      color: #f8fafc;
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--accent) 50%),
+        linear-gradient(135deg, var(--accent) 50%, transparent 50%);
+      background-position: calc(100% - 24px) calc(50% - 2px), calc(100% - 14px) calc(50% - 2px);
+      background-size: 10px 10px, 10px 10px;
+      background-repeat: no-repeat;
+      cursor: pointer;
     }
 
     .file-picker {
@@ -161,15 +191,19 @@
   <main class="viewport">
     <section class="panel">
       <header>
-        <h1>QuickNES in the Browser</h1>
-        <p>Loads the real QuickNES libretro core compiled with <strong>wasi-sdk</strong> and streams frames/audio via
-          JavaScript callbacks.</p>
+        <h1>Libretro cores in the browser</h1>
+        <p>Pick any supported WebAssembly libretro core compiled with <strong>wasi-sdk</strong>, then stream frames,
+          audio, and inputs entirely from JavaScript.</p>
       </header>
 
       <div class="controls">
+        <label class="select-group">
+          <span>Core</span>
+          <select id="coreSelect"></select>
+        </label>
         <label class="file-picker">
-          Load NES ROM
-          <input id="romInput" type="file" accept=".nes" />
+          <span id="romLabel">Load ROM</span>
+          <input id="romInput" type="file" />
         </label>
         <button id="resetBtn" type="button">Reset Core</button>
       </div>
@@ -179,6 +213,7 @@
       </div>
 
       <div class="meta">
+        <div>Core: <span id="coreName">—</span></div>
         <div>ROM: <span id="romName">—</span></div>
         <div>Status: <span id="statusLine">Loading core…</span></div>
       </div>

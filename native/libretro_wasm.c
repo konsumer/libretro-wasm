@@ -55,6 +55,7 @@ enum {
 
 enum {
     RETRO_ENVIRONMENT_SET_ROTATION = 1,
+    RETRO_ENVIRONMENT_GET_CAN_DUPE = 3,
     RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY = 9,
     RETRO_ENVIRONMENT_SET_PIXEL_FORMAT = 10,
     RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS = 11,
@@ -784,6 +785,13 @@ static int32_t host_environment(wasm_exec_env_t exec_env, int32_t cmd, int32_t d
         case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
         case RETRO_ENVIRONMENT_SET_ROTATION:
             return 1;
+        case RETRO_ENVIRONMENT_GET_CAN_DUPE: {
+            if (data_ptr && inst && wasm_runtime_validate_app_addr(inst, data_ptr, sizeof(uint8_t))) {
+                uint8_t *flag = wasm_runtime_addr_app_to_native(inst, data_ptr);
+                *flag = 1;
+            }
+            return 1;
+        }
         case RETRO_ENVIRONMENT_GET_LANGUAGE: {
             if (!data_ptr || !inst) {
                 return 0;

@@ -123,6 +123,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(libretro_common)
 
+FetchContent_Declare(
+  gambatte
+  URL https://github.com/libretro/gambatte-libretro/archive/refs/heads/master.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(gambatte)
+
 set(LIBRETRO_COMMON_INCLUDE_DIR ${libretro_common_SOURCE_DIR}/include)
 
 # Shared shim source compiled into every core target.
@@ -189,3 +196,79 @@ target_compile_definitions(quicknes_core PRIVATE
 target_compile_options(quicknes_core PRIVATE -fno-exceptions -fno-rtti)
 target_link_libraries(quicknes_core PRIVATE m)
 configure_libretro_wasm_target(quicknes_core quicknes)
+
+# -----------------------------------------------------------------------------
+# Gambatte (Game Boy / Game Boy Color)
+# -----------------------------------------------------------------------------
+set(GAMBATTE_CORE_DIR ${gambatte_SOURCE_DIR}/libgambatte/src)
+set(GAMBATTE_LIBRETRO_DIR ${gambatte_SOURCE_DIR}/libgambatte/libretro)
+
+set(GAMBATTE_SOURCES
+  ${GAMBATTE_CORE_DIR}/bootloader.cpp
+  ${GAMBATTE_CORE_DIR}/cpu.cpp
+  ${GAMBATTE_CORE_DIR}/gambatte.cpp
+  ${GAMBATTE_CORE_DIR}/initstate.cpp
+  ${GAMBATTE_CORE_DIR}/interrupter.cpp
+  ${GAMBATTE_CORE_DIR}/interruptrequester.cpp
+  ${GAMBATTE_CORE_DIR}/gambatte-memory.cpp
+  ${GAMBATTE_CORE_DIR}/sound.cpp
+  ${GAMBATTE_CORE_DIR}/statesaver.cpp
+  ${GAMBATTE_CORE_DIR}/tima.cpp
+  ${GAMBATTE_CORE_DIR}/video.cpp
+  ${GAMBATTE_CORE_DIR}/video_libretro.cpp
+  ${GAMBATTE_CORE_DIR}/mem/cartridge.cpp
+  ${GAMBATTE_CORE_DIR}/mem/cartridge_libretro.cpp
+  ${GAMBATTE_CORE_DIR}/mem/huc3.cpp
+  ${GAMBATTE_CORE_DIR}/mem/memptrs.cpp
+  ${GAMBATTE_CORE_DIR}/mem/rtc.cpp
+  ${GAMBATTE_CORE_DIR}/sound/channel1.cpp
+  ${GAMBATTE_CORE_DIR}/sound/channel2.cpp
+  ${GAMBATTE_CORE_DIR}/sound/channel3.cpp
+  ${GAMBATTE_CORE_DIR}/sound/channel4.cpp
+  ${GAMBATTE_CORE_DIR}/sound/duty_unit.cpp
+  ${GAMBATTE_CORE_DIR}/sound/envelope_unit.cpp
+  ${GAMBATTE_CORE_DIR}/sound/length_counter.cpp
+  ${GAMBATTE_CORE_DIR}/video/ly_counter.cpp
+  ${GAMBATTE_CORE_DIR}/video/lyc_irq.cpp
+  ${GAMBATTE_CORE_DIR}/video/next_m0_time.cpp
+  ${GAMBATTE_CORE_DIR}/video/ppu.cpp
+  ${GAMBATTE_CORE_DIR}/video/sprite_mapper.cpp
+  ${GAMBATTE_LIBRETRO_DIR}/libretro.cpp
+  ${GAMBATTE_LIBRETRO_DIR}/gambatte_log.c
+  ${GAMBATTE_LIBRETRO_DIR}/blipper.c
+  ${libretro_common_SOURCE_DIR}/compat/compat_posix_string.c
+  ${libretro_common_SOURCE_DIR}/compat/compat_snprintf.c
+  ${libretro_common_SOURCE_DIR}/compat/compat_strcasestr.c
+  ${libretro_common_SOURCE_DIR}/compat/compat_strl.c
+  ${libretro_common_SOURCE_DIR}/compat/fopen_utf8.c
+  ${libretro_common_SOURCE_DIR}/encodings/encoding_utf.c
+  ${libretro_common_SOURCE_DIR}/file/file_path.c
+  ${libretro_common_SOURCE_DIR}/file/file_path_io.c
+  ${libretro_common_SOURCE_DIR}/streams/file_stream.c
+  ${libretro_common_SOURCE_DIR}/streams/file_stream_transforms.c
+  ${libretro_common_SOURCE_DIR}/string/stdstring.c
+  ${libretro_common_SOURCE_DIR}/time/rtime.c
+  ${libretro_common_SOURCE_DIR}/vfs/vfs_implementation.c
+)
+
+add_executable(gambatte_core ${GAMBATTE_SOURCES} ${LIBRETRO_SHIM_SOURCE})
+target_compile_features(gambatte_core PRIVATE cxx_std_14)
+target_include_directories(gambatte_core PRIVATE
+  ${GAMBATTE_CORE_DIR}
+  ${gambatte_SOURCE_DIR}/libgambatte/include
+  ${gambatte_SOURCE_DIR}/libgambatte
+  ${gambatte_SOURCE_DIR}/common
+  ${gambatte_SOURCE_DIR}/common/resample
+  ${GAMBATTE_LIBRETRO_DIR}
+  ${LIBRETRO_COMMON_INCLUDE_DIR}
+)
+target_compile_definitions(gambatte_core PRIVATE
+  __LIBRETRO__
+  HAVE_STDINT_H
+  HAVE_INTTYPES_H
+  CC_RESAMPLER_NO_HIGHPASS
+  VIDEO_RGB565
+)
+target_compile_options(gambatte_core PRIVATE -fno-exceptions -fno-rtti)
+target_link_libraries(gambatte_core PRIVATE m)
+configure_libretro_wasm_target(gambatte_core gambatte)

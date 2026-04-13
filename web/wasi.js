@@ -72,7 +72,7 @@ class WasiPreview1 {
       fd_filestat_get: this.stub_badf.bind(this),
       fd_filestat_set_size: this.stub_badf.bind(this),
       fd_filestat_set_times: this.stub_badf.bind(this),
-      fd_stat_set_flags: this.stub_nosys.bind(this),
+      fd_fdstat_set_flags: this.stub_nosys.bind(this),
       path_open: this.path_open.bind(this),
       path_filestat_get: this.stub_badf.bind(this),
       path_filestat_set_times: this.stub_badf.bind(this),

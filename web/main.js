@@ -3,6 +3,7 @@ import { createWasiImports } from "./wasi.js";
 
 const RETRO_ENV = {
   SET_ROTATION: 1,
+  GET_CAN_DUPE: 3,
   SET_PIXEL_FORMAT: 10,
   SET_INPUT_DESCRIPTORS: 11,
   GET_VARIABLE: 15,
@@ -49,12 +50,38 @@ const PIXEL_FORMAT = {
   RGB565: 2,
 };
 
+const AUDIO_PENDING_FLUSH_SAMPLES = 8192;
+
+const CORE_LIBRARY = [
+  {
+    id: "quicknes",
+    label: "QuickNES (NES)",
+    path: "./cores/quicknes.wasm",
+    romLabel: "Load NES ROM",
+    extensions: [".nes"],
+    description: "Nintendo Entertainment System",
+  },
+  {
+    id: "gambatte",
+    label: "Gambatte (GB/GBC)",
+    path: "./cores/gambatte.wasm",
+    romLabel: "Load GB/GBC ROM",
+    extensions: [".gb", ".gbc"],
+    description: "Game Boy / Game Boy Color",
+  },
+];
+
 const canvas = document.getElementById("screen");
 const ctx = canvas.getContext("2d", { alpha: false });
 const romNameEl = document.getElementById("romName");
 const statusEl = document.getElementById("statusLine");
 const fileInput = document.getElementById("romInput");
 const resetBtn = document.getElementById("resetBtn");
+const coreSelect = document.getElementById("coreSelect");
+const romLabelEl = document.getElementById("romLabel");
+const coreNameEl = document.getElementById("coreName");
+
+fileInput.disabled = true;
 
 let host = null;
 let wasi = null;
@@ -64,8 +91,10 @@ let framebuffer = null;
 let framebufferWidth = 0;
 let framebufferHeight = 0;
 let pendingSamples = [];
+let currentCore = null;
+let coreSwitchPromise = null;
 
-bootstrap().catch((error) => {
+initialize().catch((error) => {
   console.error(error);
   updateStatus(`Failed to initialize core: ${error.message}`);
 });
@@ -88,14 +117,125 @@ resetBtn.addEventListener("click", () => {
   updateStatus("Core reset");
 });
 
-async function bootstrap() {
-  updateStatus("Fetching QuickNES core…");
-  const response = await fetch("./cores/quicknes.wasm");
+coreSelect.addEventListener("change", async (event) => {
+  const coreId = event.target.value;
+  try {
+    await selectCore(coreId);
+  } catch (error) {
+    console.error(error);
+    updateStatus(`Failed to load core: ${error.message}`);
+  }
+});
+
+async function initialize() {
+  populateCoreOptions();
+  if (!CORE_LIBRARY.length) {
+    updateStatus("No cores configured.");
+    clearCoreMetadata();
+    fileInput.disabled = true;
+    coreSelect.disabled = true;
+    resetBtn.disabled = true;
+    return;
+  }
+  coreSelect.value = CORE_LIBRARY[0].id;
+  await selectCore(CORE_LIBRARY[0].id);
+}
+
+function populateCoreOptions() {
+  coreSelect.innerHTML = "";
+  if (!CORE_LIBRARY.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No cores available";
+    coreSelect.append(option);
+    return;
+  }
+  for (const core of CORE_LIBRARY) {
+    const option = document.createElement("option");
+    option.value = core.id;
+    option.textContent = core.label;
+    coreSelect.append(option);
+  }
+}
+
+async function selectCore(coreId) {
+  if (!coreId) return;
+  const config = CORE_LIBRARY.find((core) => core.id === coreId);
+  if (!config) {
+    throw new Error(`Unknown core '${coreId}'`);
+  }
+  if (coreSwitchPromise) {
+    await coreSwitchPromise;
+  }
+  coreSwitchPromise = (async () => {
+    coreSelect.disabled = true;
+    fileInput.disabled = true;
+    await teardownCurrentCore();
+    applyCoreMetadata(config);
+    try {
+      await bootstrap(config);
+      currentCore = config;
+      fileInput.disabled = false;
+    } catch (error) {
+      clearCoreMetadata();
+      throw error;
+    } finally {
+      coreSelect.disabled = false;
+    }
+  })();
+  try {
+    await coreSwitchPromise;
+  } finally {
+    coreSwitchPromise = null;
+  }
+}
+
+function applyCoreMetadata(core) {
+  romLabelEl.textContent = core.romLabel ?? "Load ROM";
+  romInput.accept = (core.extensions ?? []).join(",");
+  romInput.value = "";
+  coreNameEl.textContent = core.label;
+  romNameEl.textContent = "—";
+}
+
+function clearCoreMetadata() {
+  romLabelEl.textContent = "Load ROM";
+  romInput.accept = "";
+  romInput.value = "";
+  coreNameEl.textContent = "—";
+  romNameEl.textContent = "—";
+}
+
+function teardownCurrentCore() {
+  if (rafHandle) {
+    cancelAnimationFrame(rafHandle);
+    rafHandle = 0;
+  }
+  if (host?.unloadGame) {
+    try {
+      host.unloadGame();
+    } catch (error) {
+      console.warn("Failed to unload previous game", error);
+    }
+  }
+  host = null;
+  wasi = null;
+  gameLoaded = false;
+  pendingSamples = [];
+  framebuffer = null;
+  framebufferWidth = 0;
+  framebufferHeight = 0;
+}
+
+async function bootstrap(coreConfig) {
+  updateStatus(`Fetching ${coreConfig.label}…`);
+  const response = await fetch(coreConfig.path);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status} when fetching core`);
   }
   const coreBytes = await response.arrayBuffer();
 
+  env = new RetroEnvironment(updateStatus);
   host = new LibretroHost({
     callbacks: {
       environment: (payload) => env.handle(payload),
@@ -111,7 +251,7 @@ async function bootstrap() {
   await host.load(coreBytes, { imports: wasi.imports });
   wasi.setMemory(host.memory);
   host.initializeCore();
-  updateStatus("Core ready. Load a ROM to begin.");
+  updateStatus(`${coreConfig.label} ready. Load a ROM to begin.`);
 }
 
 async function loadRom(file) {
@@ -119,13 +259,14 @@ async function loadRom(file) {
   if (gameLoaded) {
     host.unloadGame();
   }
+  pendingSamples = [];
   const loaded = host.loadGame({ path: file.name, data });
   if (!loaded) {
     throw new Error("retro_load_game returned false");
   }
   romNameEl.textContent = file.name;
   gameLoaded = true;
-  updateStatus("Running");
+  updateStatus(`Running ${file.name} on ${currentCore?.label ?? "core"}`);
   startLoop();
 }
 
@@ -183,7 +324,7 @@ function handleAudioBatch(samples, frames) {
 
 function handleAudioSample(left, right) {
   pendingSamples.push(left, right);
-  if (pendingSamples.length >= 2048) {
+  if (pendingSamples.length >= AUDIO_PENDING_FLUSH_SAMPLES) {
     const buffer = Int16Array.from(pendingSamples);
     pendingSamples = [];
     audio.push(buffer, buffer.length / 2);
@@ -223,6 +364,9 @@ class RetroEnvironment {
       case RETRO_ENV.SET_MEMORY_MAPS:
       case RETRO_ENV.SET_SUPPORT_NO_GAME:
       case RETRO_ENV.SET_ROTATION:
+        return true;
+      case RETRO_ENV.GET_CAN_DUPE:
+        if (dataPtr) view.setUint8(dataPtr, 1);
         return true;
       case RETRO_ENV.GET_VARIABLE:
         return this._writeVariable(host, view, dataPtr);
@@ -304,7 +448,12 @@ class RetroEnvironment {
       return false;
     }
     const pointer = this._ensureValuePointer(host, key, record.value);
-    view.setUint32(valueOutPtr, pointer >>> 0, true);
+    let targetView = view;
+    const memory = host?.memory;
+    if (memory && targetView.buffer !== memory.buffer) {
+      targetView = new DataView(memory.buffer);
+    }
+    targetView.setUint32(valueOutPtr, pointer >>> 0, true);
     return true;
   }
 
@@ -403,6 +552,7 @@ class AudioSink {
   constructor() {
     this.context = null;
     this.nextTime = 0;
+    this.minLeadSeconds = 0.08;
   }
 
   async resume() {
@@ -410,6 +560,7 @@ class AudioSink {
     if (ctx.state === "suspended") {
       await ctx.resume();
     }
+    this.nextTime = Math.max(this.nextTime, ctx.currentTime + this.minLeadSeconds);
   }
 
   push(samples, frames) {
@@ -425,7 +576,7 @@ class AudioSink {
     const source = ctx.createBufferSource();
     source.buffer = buffer;
     source.connect(ctx.destination);
-    const startAt = Math.max(this.nextTime, ctx.currentTime + 0.01);
+    const startAt = Math.max(this.nextTime, ctx.currentTime + this.minLeadSeconds);
     source.start(startAt);
     this.nextTime = startAt + buffer.duration;
   }
@@ -439,7 +590,7 @@ class AudioSink {
   }
 }
 
-const env = new RetroEnvironment(updateStatus);
+let env = new RetroEnvironment(updateStatus);
 const input = new InputManager();
 const audio = new AudioSink();
 
