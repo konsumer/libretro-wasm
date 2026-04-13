@@ -170,9 +170,16 @@ typedef struct {
 
     bool running;
     char window_title[256];
+    char host_rom_path[PATH_MAX];
+    char guest_rom_path[PATH_MAX];
+    char rom_directory[PATH_MAX];
 } HostContext;
 
 static HostContext g_host = {0};
+
+static char g_wasi_map_entries[4][PATH_MAX * 2];
+static const char *g_wasi_map_ptrs[4];
+static uint32_t g_wasi_map_count = 0;
 
 static bool audio_ring_init(AudioRingBuffer *rb, size_t initial_capacity) {
     rb->data = (int16_t *)malloc(initial_capacity * sizeof(int16_t));
@@ -323,6 +330,78 @@ static const char *path_basename(const char *path) {
     }
 #endif
     return slash ? slash + 1 : path;
+}
+
+static bool make_absolute_path(const char *input, char *output, size_t size) {
+    if (!input || !output || size == 0) {
+        return false;
+    }
+#if defined(_WIN32)
+    return _fullpath(output, input, size) != NULL;
+#else
+    char *resolved = realpath(input, output);
+    return resolved != NULL;
+#endif
+}
+
+static void path_dirname_copy(const char *path, char *output, size_t size) {
+    if (!output || size == 0) {
+        return;
+    }
+    if (!path || !*path) {
+        snprintf(output, size, ".");
+        return;
+    }
+    strncpy(output, path, size - 1);
+    output[size - 1] = '\0';
+    char *slash = strrchr(output, '/');
+#if defined(_WIN32)
+    char *backslash = strrchr(output, '\\');
+    if (!slash || (backslash && backslash > slash)) {
+        slash = backslash;
+    }
+#endif
+    if (!slash) {
+        snprintf(output, size, ".");
+    }
+    else if (slash == output) {
+        slash[1] = '\0';
+    }
+    else {
+        *slash = '\0';
+    }
+}
+
+static void wasi_reset_map_entries(void) {
+    g_wasi_map_count = 0;
+}
+
+static void wasi_add_map_entry(const char *guest, const char *host) {
+    if (!guest || !host || g_wasi_map_count >= (sizeof(g_wasi_map_ptrs) / sizeof(g_wasi_map_ptrs[0]))) {
+        return;
+    }
+    snprintf(g_wasi_map_entries[g_wasi_map_count], sizeof(g_wasi_map_entries[g_wasi_map_count]), "%s::%s", guest, host);
+    g_wasi_map_ptrs[g_wasi_map_count] = g_wasi_map_entries[g_wasi_map_count];
+    g_wasi_map_count += 1;
+}
+
+static void configure_wasi_for_rom_dir(const char *rom_dir) {
+    wasi_reset_map_entries();
+    if (rom_dir && *rom_dir) {
+        wasi_add_map_entry("/rom", rom_dir);
+    }
+    wasm_runtime_set_wasi_args_ex(g_host.module,
+                                  NULL,
+                                  0,
+                                  g_wasi_map_ptrs,
+                                  g_wasi_map_count,
+                                  NULL,
+                                  0,
+                                  NULL,
+                                  0,
+                                  -1,
+                                  -1,
+                                  -1);
 }
 
 static uint8_t *read_file(const char *path, size_t *out_size) {
@@ -518,9 +597,9 @@ static void fetch_system_info(char *name, size_t name_cap, char *version, size_t
     }
 }
 
-static bool load_game(const char *rom_path) {
+static bool load_game(const char *rom_host_path, const char *rom_guest_path) {
     size_t rom_size = 0;
-    uint8_t *rom_data = read_file(rom_path, &rom_size);
+    uint8_t *rom_data = read_file(rom_host_path, &rom_size);
     if (!rom_data) {
         return false;
     }
@@ -533,7 +612,7 @@ static bool load_game(const char *rom_path) {
     memcpy(rom_native, rom_data, rom_size);
     free(rom_data);
 
-    uint32_t path_ptr = wasm_write_cstring(rom_path);
+    uint32_t path_ptr = wasm_write_cstring(rom_guest_path ? rom_guest_path : rom_host_path);
     if (!path_ptr) {
         wasm_runtime_module_free(g_host.module_inst, rom_ptr);
         return false;
@@ -1059,7 +1138,7 @@ static bool init_runtime(void) {
     return true;
 }
 
-static bool instantiate_module(void) {
+static bool instantiate_module(const char *rom_dir) {
     if (!g_host.core_bytes || !g_host.core_size) {
         return false;
     }
@@ -1069,6 +1148,7 @@ static bool instantiate_module(void) {
         TraceLog(LOG_ERROR, "Unable to load core: %s", error_buf);
         return false;
     }
+    configure_wasi_for_rom_dir(rom_dir);
     g_host.module_inst = wasm_runtime_instantiate(g_host.module, MODULE_STACK_SIZE, MODULE_HEAP_SIZE, error_buf, sizeof(error_buf));
     if (!g_host.module_inst) {
         TraceLog(LOG_ERROR, "Unable to instantiate core: %s", error_buf);
@@ -1107,19 +1187,37 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    const char *core_path = argv[1];
-    const char *rom_path = argv[2];
+    char core_realpath[PATH_MAX];
+    char rom_realpath[PATH_MAX];
+    if (!make_absolute_path(argv[1], core_realpath, sizeof(core_realpath))) {
+        TraceLog(LOG_ERROR, "Unable to resolve core path: %s", argv[1]);
+        return 1;
+    }
+    if (!make_absolute_path(argv[2], rom_realpath, sizeof(rom_realpath))) {
+        TraceLog(LOG_ERROR, "Unable to resolve rom path: %s", argv[2]);
+        return 1;
+    }
+
+    const char *core_path = core_realpath;
+    const char *rom_path = rom_realpath;
+
     g_host.core_bytes = read_file(core_path, &g_host.core_size);
     if (!g_host.core_bytes) {
         return 1;
     }
+
+    strncpy(g_host.host_rom_path, rom_path, sizeof(g_host.host_rom_path) - 1);
+    g_host.host_rom_path[sizeof(g_host.host_rom_path) - 1] = '\0';
+    path_dirname_copy(rom_path, g_host.rom_directory, sizeof(g_host.rom_directory));
+    const char *rom_base = path_basename(rom_path);
+    snprintf(g_host.guest_rom_path, sizeof(g_host.guest_rom_path), "/rom/%s", rom_base);
 
     bool success = false;
 
     if (!init_runtime()) {
         goto cleanup;
     }
-    if (!instantiate_module()) {
+    if (!instantiate_module(g_host.rom_directory)) {
         goto cleanup;
     }
     if (!resolve_exports()) {
@@ -1135,7 +1233,7 @@ int main(int argc, char *argv[]) {
     if (!call_noargs(g_host.fn_retro_init, "retro_init")) {
         goto cleanup;
     }
-    if (!load_game(rom_path)) {
+    if (!load_game(g_host.host_rom_path, g_host.guest_rom_path)) {
         goto cleanup;
     }
 
@@ -1147,7 +1245,7 @@ int main(int argc, char *argv[]) {
 
     char core_name[128] = {0};
     fetch_system_info(core_name, sizeof(core_name), NULL, 0);
-    setup_window(&av_info, core_name, rom_path);
+    setup_window(&av_info, core_name, g_host.host_rom_path);
     update_frame_timing(g_host.frame_rate);
 
     g_host.running = true;
