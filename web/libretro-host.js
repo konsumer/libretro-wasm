@@ -154,6 +154,31 @@ export class LibretroHost {
     return Boolean(this.exports.retro_load_game(structPtr));
   }
 
+  getSystemAvInfo() {
+    this._assertExports();
+    if (typeof this.exports.retro_get_system_av_info !== "function") {
+      return null;
+    }
+    const structSize = 40;
+    const ptr = this._alloc(structSize, 8);
+    new Uint8Array(this.memory.buffer, ptr, structSize).fill(0);
+    this.exports.retro_get_system_av_info(ptr);
+    const view = new DataView(this.memory.buffer);
+    const geometry = {
+      baseWidth: view.getUint32(ptr, true),
+      baseHeight: view.getUint32(ptr + 4, true),
+      maxWidth: view.getUint32(ptr + 8, true),
+      maxHeight: view.getUint32(ptr + 12, true),
+      aspectRatio: view.getFloat32(ptr + 16, true),
+    };
+    const timingOffset = ptr + 24;
+    const timing = {
+      fps: view.getFloat64(timingOffset, true),
+      sampleRate: view.getFloat64(timingOffset + 8, true),
+    };
+    return { geometry, timing };
+  }
+
   /**
    * Calls retro_unload_game if exported.
    */

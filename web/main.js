@@ -4,6 +4,7 @@ import { createWasiImports } from "./wasi.js";
 const RETRO_ENV = {
   SET_ROTATION: 1,
   GET_CAN_DUPE: 3,
+  SET_SYSTEM_AV_INFO: 32,
   SET_PIXEL_FORMAT: 10,
   SET_INPUT_DESCRIPTORS: 11,
   GET_VARIABLE: 15,
@@ -93,11 +94,10 @@ let framebufferHeight = 0;
 let pendingSamples = [];
 let currentCore = null;
 let coreSwitchPromise = null;
-
-initialize().catch((error) => {
-  console.error(error);
-  updateStatus(`Failed to initialize core: ${error.message}`);
-});
+let coreSampleRate = 44100;
+let input = null;
+let audio = null;
+let env = null;
 
 fileInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -225,6 +225,8 @@ function teardownCurrentCore() {
   framebuffer = null;
   framebufferWidth = 0;
   framebufferHeight = 0;
+  coreSampleRate = 44100;
+  audio.setSourceSampleRate(coreSampleRate);
 }
 
 async function bootstrap(coreConfig) {
@@ -235,7 +237,7 @@ async function bootstrap(coreConfig) {
   }
   const coreBytes = await response.arrayBuffer();
 
-  env = new RetroEnvironment(updateStatus);
+  env = createEnvironment();
   host = new LibretroHost({
     callbacks: {
       environment: (payload) => env.handle(payload),
@@ -251,6 +253,7 @@ async function bootstrap(coreConfig) {
   await host.load(coreBytes, { imports: wasi.imports });
   wasi.setMemory(host.memory);
   host.initializeCore();
+  synchronizeAvInfoFromCore();
   updateStatus(`${coreConfig.label} ready. Load a ROM to begin.`);
 }
 
@@ -264,6 +267,7 @@ async function loadRom(file) {
   if (!loaded) {
     throw new Error("retro_load_game returned false");
   }
+  synchronizeAvInfoFromCore();
   romNameEl.textContent = file.name;
   gameLoaded = true;
   updateStatus(`Running ${file.name} on ${currentCore?.label ?? "core"}`);
@@ -318,7 +322,7 @@ function handleVideoRefresh(frame, width, height, pitch) {
 function handleAudioBatch(samples, frames) {
   if (!frames || !samples) return 0;
   const copy = samples.slice(0, frames * 2);
-  audio.push(copy, frames);
+  audio.push(copy, frames, coreSampleRate);
   return frames;
 }
 
@@ -327,7 +331,7 @@ function handleAudioSample(left, right) {
   if (pendingSamples.length >= AUDIO_PENDING_FLUSH_SAMPLES) {
     const buffer = Int16Array.from(pendingSamples);
     pendingSamples = [];
-    audio.push(buffer, buffer.length / 2);
+    audio.push(buffer, buffer.length / 2, coreSampleRate);
   }
 }
 
@@ -345,12 +349,14 @@ function updateStatus(text) {
 }
 
 class RetroEnvironment {
-  constructor(onMessage) {
+  constructor(onMessage, options = {}) {
     this.onMessage = onMessage;
+    this.onAvInfoChange = options.onAvInfoChange ?? null;
     this.variables = new Map();
     this.variablePointers = new Map();
     this.variableDirty = false;
     this.pixelFormat = 0;
+    this.avInfo = this._defaultAvInfo();
   }
 
   handle({ cmd, dataPtr, host }) {
@@ -359,6 +365,8 @@ class RetroEnvironment {
       case RETRO_ENV.SET_PIXEL_FORMAT:
         this.pixelFormat = view.getUint32(dataPtr, true);
         return this.pixelFormat === PIXEL_FORMAT.RGB565;
+      case RETRO_ENV.SET_SYSTEM_AV_INFO:
+        return this._applySystemAvInfo(host, view, dataPtr);
       case RETRO_ENV.SET_INPUT_DESCRIPTORS:
       case RETRO_ENV.SET_CONTROLLER_INFO:
       case RETRO_ENV.SET_MEMORY_MAPS:
@@ -405,6 +413,82 @@ class RetroEnvironment {
     }
   }
 
+  setAvInfo(info) {
+    if (!info) return;
+    this.avInfo = this._normalizeAvInfo(info);
+    this.onAvInfoChange?.(this.avInfo);
+  }
+
+  _applySystemAvInfo(host, view, ptr) {
+    if (!ptr) return false;
+    const info = this._readSystemAvInfo(host, view, ptr);
+    if (!info) return false;
+    this.setAvInfo(info);
+    return true;
+  }
+
+  _readSystemAvInfo(host, view, ptr) {
+    const dv = this._ensureView(host, view);
+    if (!dv) return null;
+    const geometry = {
+      baseWidth: dv.getUint32(ptr, true),
+      baseHeight: dv.getUint32(ptr + 4, true),
+      maxWidth: dv.getUint32(ptr + 8, true),
+      maxHeight: dv.getUint32(ptr + 12, true),
+      aspectRatio: dv.getFloat32(ptr + 16, true),
+    };
+    const timingOffset = ptr + 24;
+    const timing = {
+      fps: dv.getFloat64(timingOffset, true),
+      sampleRate: dv.getFloat64(timingOffset + 8, true),
+    };
+    return this._normalizeAvInfo({ geometry, timing });
+  }
+
+  _ensureView(host, view) {
+    if (host?.memory) {
+      if (!view || view.buffer !== host.memory.buffer) {
+        return new DataView(host.memory.buffer);
+      }
+    }
+    return view ?? null;
+  }
+
+  _defaultAvInfo() {
+    return {
+      geometry: {
+        baseWidth: 256,
+        baseHeight: 240,
+        maxWidth: 256,
+        maxHeight: 240,
+        aspectRatio: 256 / 240,
+      },
+      timing: {
+        fps: 60,
+        sampleRate: 44100,
+      },
+    };
+  }
+
+  _normalizeAvInfo(info) {
+    const defaults = this._defaultAvInfo();
+    const geometry = info?.geometry ?? {};
+    const timing = info?.timing ?? {};
+    return {
+      geometry: {
+        baseWidth: geometry.baseWidth ?? defaults.geometry.baseWidth,
+        baseHeight: geometry.baseHeight ?? defaults.geometry.baseHeight,
+        maxWidth: geometry.maxWidth ?? defaults.geometry.maxWidth,
+        maxHeight: geometry.maxHeight ?? defaults.geometry.maxHeight,
+        aspectRatio: geometry.aspectRatio ?? defaults.geometry.aspectRatio,
+      },
+      timing: {
+        fps: timing.fps ?? defaults.timing.fps,
+        sampleRate: timing.sampleRate ?? defaults.timing.sampleRate,
+      },
+    };
+  }
+
   _ingestVariables(host, view, ptr) {
     this.variables.clear();
     this.variablePointers.clear();
@@ -448,11 +532,8 @@ class RetroEnvironment {
       return false;
     }
     const pointer = this._ensureValuePointer(host, key, record.value);
-    let targetView = view;
-    const memory = host?.memory;
-    if (memory && targetView.buffer !== memory.buffer) {
-      targetView = new DataView(memory.buffer);
-    }
+    const targetView = this._ensureView(host, view);
+    if (!targetView) return false;
     targetView.setUint32(valueOutPtr, pointer >>> 0, true);
     return true;
   }
@@ -553,6 +634,7 @@ class AudioSink {
     this.context = null;
     this.nextTime = 0;
     this.minLeadSeconds = 0.08;
+    this.sourceSampleRate = 44100;
   }
 
   async resume() {
@@ -563,15 +645,31 @@ class AudioSink {
     this.nextTime = Math.max(this.nextTime, ctx.currentTime + this.minLeadSeconds);
   }
 
-  push(samples, frames) {
-    if (!frames) return;
+  setSourceSampleRate(rate) {
+    if (Number.isFinite(rate) && rate > 0) {
+      this.sourceSampleRate = rate;
+    }
+  }
+
+  push(samples, frames, sourceRate) {
+    if (!frames || !samples) return;
+    if (Number.isFinite(sourceRate) && sourceRate > 0) {
+      this.sourceSampleRate = sourceRate;
+    }
     const ctx = this._ensureContext();
-    const buffer = ctx.createBuffer(2, frames, ctx.sampleRate);
+    const targetRate = ctx.sampleRate;
+    const sourceRateValue = this.sourceSampleRate || targetRate;
+    const needsResample = Math.abs(sourceRateValue - targetRate) > 0.5;
+    const outputFrames = needsResample
+      ? Math.max(1, Math.round(frames * (targetRate / sourceRateValue)))
+      : frames;
+    const buffer = ctx.createBuffer(2, outputFrames, targetRate);
     const left = buffer.getChannelData(0);
     const right = buffer.getChannelData(1);
-    for (let i = 0; i < frames; i += 1) {
-      left[i] = clampSample(samples[i * 2] / 32768);
-      right[i] = clampSample(samples[i * 2 + 1] / 32768);
+    if (needsResample) {
+      this._resampleInto(samples, frames, left, right, sourceRateValue, targetRate);
+    } else {
+      this._copyInto(samples, frames, left, right);
     }
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -583,17 +681,86 @@ class AudioSink {
 
   _ensureContext() {
     if (!this.context) {
-      this.context = new AudioContext({ sampleRate: 44100 });
+      const desiredRate = Math.max(8000, Math.min(192000, Math.floor(this.sourceSampleRate || 44100)));
+      try {
+        this.context = new AudioContext({ sampleRate: desiredRate });
+      } catch (_error) {
+        this.context = new AudioContext();
+      }
       this.nextTime = this.context.currentTime;
     }
     return this.context;
   }
-}
 
-let env = new RetroEnvironment(updateStatus);
-const input = new InputManager();
-const audio = new AudioSink();
+  _copyInto(samples, frames, left, right) {
+    const scale = 1 / 32768;
+    for (let i = 0; i < frames; i += 1) {
+      const base = i * 2;
+      left[i] = clampSample(samples[base] * scale);
+      right[i] = clampSample(samples[base + 1] * scale);
+    }
+  }
+
+  _resampleInto(samples, frames, left, right, sourceRate, targetRate) {
+    if (frames <= 0) return;
+    const scale = 1 / 32768;
+    const step = sourceRate / targetRate;
+    const lastFrame = frames - 1;
+    for (let i = 0; i < left.length; i += 1) {
+      const position = i * step;
+      const base = Math.min(Math.floor(position), lastFrame);
+      const frac = position - base;
+      const next = Math.min(base + 1, lastFrame);
+      const baseIndex = base * 2;
+      const nextIndex = next * 2;
+      const l0 = samples[baseIndex] * scale;
+      const l1 = samples[nextIndex] * scale;
+      const r0 = samples[baseIndex + 1] * scale;
+      const r1 = samples[nextIndex + 1] * scale;
+      left[i] = clampSample(l0 + (l1 - l0) * frac);
+      right[i] = clampSample(r0 + (r1 - r0) * frac);
+    }
+  }
+}
 
 function clampSample(value) {
   return Math.max(-1, Math.min(1, value));
 }
+
+function handleAvInfoChange(info) {
+  if (!info?.timing) return;
+  const nextSampleRate = info.timing.sampleRate;
+  if (Number.isFinite(nextSampleRate) && nextSampleRate > 0) {
+    coreSampleRate = nextSampleRate;
+    audio?.setSourceSampleRate(coreSampleRate);
+    pendingSamples = [];
+  }
+}
+
+function createEnvironment() {
+  return new RetroEnvironment(updateStatus, {
+    onAvInfoChange: handleAvInfoChange,
+  });
+}
+
+function synchronizeAvInfoFromCore() {
+  if (!host?.getSystemAvInfo || !env?.setAvInfo) return;
+  try {
+    const info = host.getSystemAvInfo();
+    if (info) {
+      env.setAvInfo(info);
+    }
+  } catch (error) {
+    console.warn("Unable to read system AV info", error);
+  }
+}
+
+input = new InputManager();
+audio = new AudioSink();
+audio.setSourceSampleRate(coreSampleRate);
+env = createEnvironment();
+
+initialize().catch((error) => {
+  console.error(error);
+  updateStatus(`Failed to initialize core: ${error.message}`);
+});
