@@ -94,6 +94,12 @@ jobs:
             libxinerama-dev libxi-dev libxext-dev libxfixes-dev libwayland-dev \
             libwayland-bin libxkbcommon-dev zip
 
+      - name: Setup MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Set archive metadata
         shell: bash
         run: |
@@ -109,8 +115,14 @@ jobs:
           fi
 
       - name: Build native runtime
+        shell: bash
         run: |
-          npm run native
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cmake -S native -B build/native -G Ninja -T ClangCL -DCMAKE_BUILD_TYPE=Release -DWAMR_BUILD_SIMD=0 -DWAMR_BUILD_INVOKE_NATIVE_GENERAL=1
+            cmake --build build/native --config Release
+          else
+            npm run native
+          fi
 
       - name: Package native runtime
         shell: bash
