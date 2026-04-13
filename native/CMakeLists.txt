@@ -52,6 +52,10 @@ FetchContent_MakeAvailable(wamr)
 
 include (${wamr_SOURCE_DIR}/build-scripts/runtime_lib.cmake)
 
+if(WIN32)
+  add_compile_definitions(WINAPI_PARTITION_DESKTOP=0)
+endif()
+
 add_executable(libretro_wasm libretro_wasm.c)
 target_link_libraries(libretro_wasm PRIVATE vmlib raylib)
 target_include_directories(libretro_wasm PRIVATE
@@ -59,7 +63,3 @@ target_include_directories(libretro_wasm PRIVATE
   ${wamr_SOURCE_DIR}/core/shared/utils
   ${wamr_SOURCE_DIR}/core/shared/platform/common
 )
-
-if(WIN32)
-  target_compile_definitions(libretro_wasm PRIVATE WINAPI_PARTITION_DESKTOP=0)
-endif()
