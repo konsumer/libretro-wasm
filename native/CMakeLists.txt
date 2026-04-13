@@ -10,8 +10,19 @@ project(libretro_wasm_native
   LANGUAGES C
 )
 
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
+endif()
+
+if(POLICY CMP0077)
+  cmake_policy(SET CMP0077 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+endif()
+
 if(POLICY CMP0169)
-  cmake_policy(SET CMP0169 OLD)
+  cmake_policy(SET CMP0169 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0169 NEW)
 endif()
 
 include(FetchContent)
@@ -22,18 +33,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
-FetchContent_GetProperties(raylib)
-if(NOT raylib_POPULATED)
-  FetchContent_Populate(raylib)
-endif()
-
 string(TOLOWER ${CMAKE_HOST_SYSTEM_NAME} WAMR_BUILD_PLATFORM)
 set (WAMR_BUILD_INTERP 1)
 set (WAMR_BUILD_DEBUG_INTERP 0)
 set (WAMR_BUILD_FAST_INTERP 1)
 set (WAMR_BUILD_AOT 0)
 set (WAMR_BUILD_LIBC_BUILTIN 0)
-set (WAMR_BUILD_LIBC_WASI 0)
+set (WAMR_BUILD_LIBC_WASI 1)
 if(NOT DEFINED WAMR_BUILD_SIMD)
   set (WAMR_BUILD_SIMD 1)
 endif()
@@ -44,12 +50,12 @@ FetchContent_Declare(wamr
 )
 FetchContent_MakeAvailable(wamr)
 
-FetchContent_GetProperties(wamr)
-if(NOT wamr_POPULATED)
-  FetchContent_Populate(wamr)
-endif()
-
 include (${wamr_SOURCE_DIR}/build-scripts/runtime_lib.cmake)
 
 add_executable(libretro_wasm libretro_wasm.c)
 target_link_libraries(libretro_wasm PRIVATE vmlib raylib)
+target_include_directories(libretro_wasm PRIVATE
+  ${wamr_SOURCE_DIR}/core/iwasm/include
+  ${wamr_SOURCE_DIR}/core/shared/utils
+  ${wamr_SOURCE_DIR}/core/shared/platform/common
+)

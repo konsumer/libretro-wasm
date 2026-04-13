@@ -29,8 +29,19 @@ project(libretro_wasm_cores
   LANGUAGES C
 )
 
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
+endif()
+
+if(POLICY CMP0077)
+  cmake_policy(SET CMP0077 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+endif()
+
 if(POLICY CMP0169)
-  cmake_policy(SET CMP0169 OLD)
+  cmake_policy(SET CMP0169 NEW)
+  set(CMAKE_POLICY_DEFAULT_CMP0169 NEW)
 endif()
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "WASI")
@@ -103,22 +114,14 @@ FetchContent_Declare(
   URL https://github.com/libretro/QuickNES_Core/archive/refs/heads/master.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
+FetchContent_MakeAvailable(quicknes)
 
 FetchContent_Declare(
   libretro_common
   URL https://github.com/libretro/libretro-common/archive/refs/heads/master.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
-
-FetchContent_GetProperties(quicknes)
-if(NOT quicknes_POPULATED)
-  FetchContent_Populate(quicknes)
-endif()
-
-FetchContent_GetProperties(libretro_common)
-if(NOT libretro_common_POPULATED)
-  FetchContent_Populate(libretro_common)
-endif()
+FetchContent_MakeAvailable(libretro_common)
 
 set(LIBRETRO_COMMON_INCLUDE_DIR ${libretro_common_SOURCE_DIR}/include)
 

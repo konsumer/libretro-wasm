@@ -26,10 +26,20 @@ Artifacts live under `build/cores/cores/`. The QuickNES target is fetched automa
 Artifacts live under `build/native/`.
 
 ```bash
+npm run cores   # ensure the WASM cores exist
 npm run native
 
-./build/native/libretro_wasm build/cores/cores/quicknes.wasm smb.nes
+./build/native/libretro_wasm build/cores/cores/quicknes.wasm path/to/rom.nes
 ```
+
+### Native controls
+
+- Arrow keys – D-pad
+- `Z` / `X` – B / A
+- `A` / `S` – Y / X
+- `Q` / `W` – L / R
+- `Enter` – Start
+- `Shift` or `Space` – Select
 
 
 ## Running the browser demo
