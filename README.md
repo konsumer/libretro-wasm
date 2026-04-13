@@ -27,6 +27,8 @@ Artifacts live under `build/native/`.
 
 ```bash
 npm run native
+
+./build/native/libretro_wasm build/cores/cores/quicknes.wasm smb.nes
 ```
 
 
