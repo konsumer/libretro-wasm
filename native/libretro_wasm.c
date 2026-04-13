@@ -23,8 +23,10 @@
 #define MODULE_STACK_SIZE (1024 * 1024 * 2)
 #define MODULE_HEAP_SIZE (1024 * 1024 * 10)
 #define RUNTIME_HEAP_SIZE (16 * 1024 * 1024)
-#define AUDIO_CHUNK_FRAMES 512
-#define AUDIO_INITIAL_CAPACITY (AUDIO_CHUNK_FRAMES * 32)
+#define AUDIO_MIN_CHUNK_FRAMES 512
+#define AUDIO_MAX_CHUNK_FRAMES 4096
+#define AUDIO_RING_CHUNKS 32
+#define AUDIO_RING_MIN_CAPACITY 2048
 #define RETRO_HW_FRAME_BUFFER_VALID 0xffffffffu
 
 enum { RETRO_DEVICE_NONE = 0, RETRO_DEVICE_JOYPAD = 1 };
@@ -149,7 +151,9 @@ typedef struct {
     AudioStream audio_stream;
     bool audio_ready;
     AudioRingBuffer audio_queue;
-    int16_t audio_chunk[AUDIO_CHUNK_FRAMES * 2];
+    int16_t *audio_chunk;
+    int audio_chunk_frames;
+    int audio_channels;
 
     bool running;
     char window_title[256];
@@ -188,7 +192,7 @@ static bool audio_ring_reserve(AudioRingBuffer *rb, size_t additional) {
     if (rb->size + additional <= rb->capacity) {
         return true;
     }
-    size_t new_capacity = rb->capacity ? rb->capacity : AUDIO_INITIAL_CAPACITY;
+    size_t new_capacity = rb->capacity ? rb->capacity : AUDIO_RING_MIN_CAPACITY;
     while (new_capacity < rb->size + additional) {
         new_capacity *= 2;
     }
@@ -580,23 +584,46 @@ static bool init_audio(double sample_rate) {
     if (sample_rate <= 0.0) {
         sample_rate = 48000.0;
     }
-    if (!audio_ring_init(&g_host.audio_queue, AUDIO_INITIAL_CAPACITY)) {
+    int channels = 2;
+    int chunk_frames = (int)ceil(sample_rate / (g_host.frame_rate > 0.0 ? g_host.frame_rate : 60.0));
+    if (chunk_frames < AUDIO_MIN_CHUNK_FRAMES) {
+        chunk_frames = AUDIO_MIN_CHUNK_FRAMES;
+    } else if (chunk_frames > AUDIO_MAX_CHUNK_FRAMES) {
+        chunk_frames = AUDIO_MAX_CHUNK_FRAMES;
+    }
+    size_t chunk_samples = (size_t)chunk_frames * (size_t)channels;
+    size_t initial_capacity = chunk_samples * AUDIO_RING_CHUNKS;
+    if (!audio_ring_init(&g_host.audio_queue, initial_capacity)) {
         TraceLog(LOG_WARNING, "Unable to allocate audio queue; audio disabled");
         return false;
     }
+    g_host.audio_chunk = (int16_t *)malloc(chunk_samples * sizeof(int16_t));
+    if (!g_host.audio_chunk) {
+        TraceLog(LOG_WARNING, "Unable to allocate audio staging buffer");
+        audio_ring_free(&g_host.audio_queue);
+        return false;
+    }
+    memset(g_host.audio_chunk, 0, chunk_samples * sizeof(int16_t));
     InitAudioDevice();
-    SetAudioStreamBufferSizeDefault(AUDIO_CHUNK_FRAMES);
-    AudioStream stream = LoadAudioStream((unsigned int)sample_rate, 16, 2);
+    SetAudioStreamBufferSizeDefault(chunk_frames);
+    AudioStream stream = LoadAudioStream((unsigned int)sample_rate, 16, channels);
     if (!IsAudioStreamValid(stream)) {
         TraceLog(LOG_WARNING, "Unable to create audio stream");
         CloseAudioDevice();
+        free(g_host.audio_chunk);
+        g_host.audio_chunk = NULL;
         audio_ring_free(&g_host.audio_queue);
         return false;
     }
     PlayAudioStream(stream);
+    for (int i = 0; i < 4; ++i) {
+        UpdateAudioStream(stream, g_host.audio_chunk, chunk_frames);
+    }
     g_host.audio_stream = stream;
     g_host.audio_ready = true;
     g_host.sample_rate = sample_rate;
+    g_host.audio_chunk_frames = chunk_frames;
+    g_host.audio_channels = channels;
     return true;
 }
 
@@ -604,13 +631,15 @@ static void pump_audio(void) {
     if (!g_host.audio_ready) {
         return;
     }
-    size_t samples_per_chunk = AUDIO_CHUNK_FRAMES * g_host.audio_stream.channels;
-    while (IsAudioStreamProcessed(g_host.audio_stream)) {
-        size_t popped = audio_ring_pop(&g_host.audio_queue, g_host.audio_chunk, samples_per_chunk);
-        if (popped < samples_per_chunk) {
-            memset(g_host.audio_chunk + popped, 0, (samples_per_chunk - popped) * sizeof(int16_t));
+    size_t chunk_samples = (size_t)g_host.audio_chunk_frames * (size_t)g_host.audio_channels;
+    int safety_iterations = 0;
+    while (IsAudioStreamProcessed(g_host.audio_stream) && safety_iterations < 8) {
+        size_t popped = audio_ring_pop(&g_host.audio_queue, g_host.audio_chunk, chunk_samples);
+        if (popped < chunk_samples) {
+            memset(g_host.audio_chunk + popped, 0, (chunk_samples - popped) * sizeof(int16_t));
         }
-        UpdateAudioStream(g_host.audio_stream, g_host.audio_chunk, AUDIO_CHUNK_FRAMES);
+        UpdateAudioStream(g_host.audio_stream, g_host.audio_chunk, g_host.audio_chunk_frames);
+        safety_iterations += 1;
     }
 }
 
@@ -622,6 +651,10 @@ static void shutdown_platform(void) {
         g_host.audio_ready = false;
     }
     audio_ring_free(&g_host.audio_queue);
+    free(g_host.audio_chunk);
+    g_host.audio_chunk = NULL;
+    g_host.audio_chunk_frames = 0;
+    g_host.audio_channels = 0;
     if (g_host.texture_ready) {
         UnloadTexture(g_host.texture);
         g_host.texture_ready = false;
