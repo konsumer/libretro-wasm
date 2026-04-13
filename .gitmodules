@@ -1,6 +1,0 @@
-[submodule "third_party/quicknes"]
-	path = third_party/quicknes
-	url = https://github.com/libretro/QuickNES_Core
-[submodule "third_party/libretro-2048"]
-	path = third_party/libretro-2048
-	url = https://github.com/libretro/libretro-2048

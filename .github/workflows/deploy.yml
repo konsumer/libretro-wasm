@@ -27,12 +27,17 @@ jobs:
           version: "24"
 
       - name: Build WASM cores
-        run: make
+        run: npm run cores
+
+      - name: Copy example cores to webroot
+        run: |
+          mkdir -p web/cores
+          cp build/cores/*.wasm web/cores
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: src
+          path: web
 
   deploy:
     needs: build

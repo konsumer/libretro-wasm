@@ -14,7 +14,8 @@
   ],
   "license": "MIT",
   "scripts": {
-    "build": "make",
-    "start": "npx -y live-server src"
+    "cores": "cmake -B build -G Ninja && cmake --build build",
+    "start": "npx -y live-server web --mount=/cores:./build/cores/",
+    "prestart": "npm run cores"
   }
 }
