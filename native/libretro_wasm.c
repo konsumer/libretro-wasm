@@ -12,6 +12,7 @@
 #include <string.h>
 
 #if defined(_WIN32)
+#include <windows.h>
 #include <direct.h>
 #else
 #include <unistd.h>
@@ -19,6 +20,10 @@
 
 #include <raylib.h>
 #include <wasm_export.h>
+
+#if defined(_WIN32) && !defined(PATH_MAX)
+#define PATH_MAX MAX_PATH
+#endif
 
 #define MODULE_STACK_SIZE (1024 * 1024 * 2)
 #define MODULE_HEAP_SIZE (1024 * 1024 * 10)
