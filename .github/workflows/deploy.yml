@@ -85,6 +85,15 @@ jobs:
             sudo apt-get install -y ninja-build
           fi
 
+      - name: Install Linux graphics dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libglfw3 libglfw3-dev libx11-dev libxcursor-dev libxrandr-dev \
+            libxinerama-dev libxi-dev libxext-dev libxfixes-dev libwayland-dev \
+            libwayland-bin libxkbcommon-dev zip
+
       - name: Set archive metadata
         shell: bash
         run: |
