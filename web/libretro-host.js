@@ -24,18 +24,6 @@ const defaultCallbacks = {
   inputState: () => 0,
 };
 
-const TABLE_ELEMENT_TYPE = (() => {
-  try {
-    // Some engines only accept "anyfunc" while newer ones prefer "funcref".
-    new WebAssembly.Table({ element: "funcref", initial: 1 });
-    return "funcref";
-  } catch {
-    return "anyfunc";
-  }
-})();
-
-const DEFAULT_TABLE_MIN = 2048;
-
 const mergeImports = (...sources) => {
   const merged = {};
   for (const source of sources) {
@@ -66,7 +54,6 @@ export class LibretroHost {
     this.exports = null;
     this.memory = null;
     this._allocCursor = 0;
-    this._shimActive = false;
   }
 
   /**
@@ -99,7 +86,6 @@ export class LibretroHost {
       module = await WebAssembly.compile(normalized);
     }
 
-    this._ensureTableImport(mergedImports, module);
     const instance = await WebAssembly.instantiate(module, mergedImports);
 
     this.imports = mergedImports;
@@ -284,48 +270,6 @@ export class LibretroHost {
     }
   }
 
-  _ensureTableImport(imports, module) {
-    imports.env ??= {};
-
-    let table = imports.env.__indirect_function_table;
-    if (table instanceof WebAssembly.Table) {
-      return table;
-    }
-
-    if (!module || typeof WebAssembly.Module.imports !== "function") {
-      return null;
-    }
-
-    const tableImport = WebAssembly.Module.imports(module).find(
-      (entry) => entry.kind === "table" && (entry.name === "__indirect_function_table" || entry.field === "__indirect_function_table")
-    );
-
-    if (!tableImport) {
-      return null;
-    }
-
-    const type = tableImport.type ?? {};
-    const rawMin = type.minimum ?? type.limits?.minimum ?? tableImport.minimum;
-    const rawMax = type.maximum ?? type.limits?.maximum ?? tableImport.maximum;
-    const minRequired = rawMin ?? DEFAULT_TABLE_MIN;
-    const desc = {
-      element: type.element ?? TABLE_ELEMENT_TYPE,
-      initial: minRequired,
-    };
-    if (typeof rawMax === "number") {
-      desc.maximum = rawMax;
-      if (rawMax < minRequired) {
-        throw new Error(
-          `Provided table maximum (${rawMax}) is smaller than required initial (${minRequired}).`
-        );
-      }
-    }
-
-    table = new WebAssembly.Table(desc);
-    imports.env.__indirect_function_table = table;
-    return table;
-  }
-
   _createLibretroHostImports() {
     return {
       libretro_host: {
@@ -355,7 +299,6 @@ export class LibretroHost {
       );
     }
     connector();
-    this._shimActive = true;
   }
 
   _handleEnvironment(cmd, dataPtr) {

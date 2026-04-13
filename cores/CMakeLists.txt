@@ -10,6 +10,9 @@ endif()
 
 enable_language(CXX)
 
+add_compile_options(-mno-reference-types)
+add_link_options(-mno-reference-types)
+
 # Common link/export flags shared by all WASM cores.
 set(_libretro_exports
   __wasm_call_ctors
@@ -43,9 +46,7 @@ set(_libretro_exports
 
 set(_libretro_link_options
   -Wl,--no-entry
-  -Wl,--import-table
   -Wl,--allow-undefined
-  -Wl,--growable-table
   -Wl,--initial-memory=1310720
 )
 

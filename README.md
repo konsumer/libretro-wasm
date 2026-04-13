@@ -13,7 +13,6 @@ Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and 
 | `cores/` | All WASI core sources plus `libretro_shim.c`, a bridge that connects libretro callbacks to JS imports without manual table hacking. |
 | `web/` | Browser demo (`index.html`, `main.js`, `libretro-host.js`, `wasi.js`). No bundler is required. |
 | `native/` | Placeholder for future desktop frontends. |
-| `old/` | Historical Makefile build kept for reference only. |
 
 ## Requirements
 
@@ -22,13 +21,6 @@ Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and 
 - Node.js ≥ 18 for the optional dev server.
 
 ## Building the cores
-
-```bash
-cmake -S . -B build            # configures using the wasi-sdk toolchain
-cmake --build build            # produces build/cores/minicore.wasm + quicknes.wasm
-```
-
-Or run the npm helper:
 
 ```bash
 npm run cores
@@ -74,9 +66,10 @@ Every core built from `cores/CMakeLists.txt` links against `libretro_shim.c`. Th
 
 1. Imports six host functions from the `libretro_host` module (`environment`, `video_refresh`, `audio_sample`, `audio_sample_batch`, `input_poll`, `input_state`).
 2. Registers its own static callbacks with the core’s `retro_set_*` entrypoints.
-3. Exports a single helper `libretro_host_init` that the frontend calls right after instantiation.
+3. Defines its indirect function table internally, so no host-supplied table (and no `funcref`) is required.
+4. Exports a helper `libretro_host_init` that the frontend calls immediately after instantiation.
 
-Because of this, `LibretroHost` no longer grows the function table or fabricates `WebAssembly.Function` objects. Custom cores that already provide their own shim can still be loaded—just export `libretro_host_init` and ensure those six imports exist.
+Because of this, `LibretroHost` doesn’t fabricate tables or thunks: any WASM runtime (including ones that only support `anyfunc`, such as WAMR) can host the core as long as it provides the six shim imports and WASI.
 
 ### WASI runtime helper
 
