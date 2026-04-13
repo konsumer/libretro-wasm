@@ -38,6 +38,7 @@ set(_libretro_exports
   retro_unserialize
   retro_cheat_reset
   retro_cheat_set
+  libretro_host_init
 )
 
 set(_libretro_link_options
@@ -91,10 +92,13 @@ endif()
 
 set(LIBRETRO_COMMON_INCLUDE_DIR ${libretro_common_SOURCE_DIR}/include)
 
+# Shared shim source compiled into every core target.
+set(LIBRETRO_SHIM_SOURCE ${CMAKE_CURRENT_LIST_DIR}/libretro_shim.c)
+
 # -----------------------------------------------------------------------------
 # minicore (reference core written in-tree)
 # -----------------------------------------------------------------------------
-add_executable(minicore minicore.c)
+add_executable(minicore minicore.c ${LIBRETRO_SHIM_SOURCE})
 target_include_directories(minicore PRIVATE ${LIBRETRO_COMMON_INCLUDE_DIR})
 configure_libretro_wasm_target(minicore minicore)
 
@@ -134,7 +138,7 @@ set(QUICKNES_SOURCES
   ${quicknes_SOURCE_DIR}/nes_emu/nes_ntsc.cpp
 )
 
-add_executable(quicknes_core ${QUICKNES_SOURCES})
+add_executable(quicknes_core ${QUICKNES_SOURCES} ${LIBRETRO_SHIM_SOURCE})
 target_compile_features(quicknes_core PRIVATE cxx_std_14)
 target_include_directories(quicknes_core PRIVATE
   ${quicknes_SOURCE_DIR}

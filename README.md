@@ -1,116 +1,100 @@
 # libretro-wasm host
 
-This repository contains a lightweight JavaScript frontend that can load libretro cores compiled to WebAssembly.
+Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js. This repository provides:
 
-The host is responsible for:
+- **`web/libretro-host.js`** – a thin frontend that instantiates a core, feeds it games, and surfaces video/audio/input callbacks.
+- **`cores/`** – CMake targets that build the in-tree `minicore` sample and the upstream QuickNES core as `.wasm` binaries.
+- **`web/`** – a self-contained demo UI that loads `build/cores/quicknes.wasm`, streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
 
-- Instantiating a libretro core `.wasm` module with the required imports (WASI, libc shims, etc.).
-- Exporting every callback described in `libretro.h` (environment, video, audio, input) via the WebAssembly function table so that the core can call back into the frontend.
-- Providing helpers to push data into the core's linear memory (ROMs, metadata) and to read frame/audio buffers back out.
+## Repository layout
 
-## Cloning the repository
+| Path | Purpose |
+| --- | --- |
+| `cores/` | All WASI core sources plus `libretro_shim.c`, a bridge that connects libretro callbacks to JS imports without manual table hacking. |
+| `web/` | Browser demo (`index.html`, `main.js`, `libretro-host.js`, `wasi.js`). No bundler is required. |
+| `native/` | Placeholder for future desktop frontends. |
+| `old/` | Historical Makefile build kept for reference only. |
 
-This project relies on libretro cores that live under `third_party/` as Git submodules. Clone with submodules to ensure everything needed for the build is present:
+## Requirements
+
+- [wasi-sdk 22+](https://github.com/WebAssembly/wasi-sdk) (the default toolchain auto-detects `/opt/wasi-sdk` or `$WASI_SDK_PREFIX`).
+- CMake ≥ 3.18 and a recent `clang` (provided by wasi-sdk).
+- Node.js ≥ 18 for the optional dev server.
+
+## Building the cores
 
 ```bash
-git clone --recurse-submodules https://github.com/<your>/<repo>.git
+cmake -S . -B build            # configures using the wasi-sdk toolchain
+cmake --build build            # produces build/cores/minicore.wasm + quicknes.wasm
 ```
 
-If you already cloned the repo, pull the submodules once:
+Or run the npm helper:
 
 ```bash
-git submodule update --init --recursive
+npm run cores
 ```
 
-Submodules currently tracked:
+Artifacts live under `build/cores/`. The QuickNES target is fetched automatically with `FetchContent`, so no Git submodules are needed.
 
-- `third_party/quicknes` → [libretro/QuickNES_Core](https://github.com/libretro/QuickNES_Core)
-- `third_party/libretro-2048` → [libretro/libretro-2048](https://github.com/libretro/libretro-2048)
+## Running the browser demo
 
-## Usage
+```bash
+npm run start   # builds the cores, then serves web/ with live-server (mounts build/cores)
+```
+
+Visit the printed URL, load a `.nes` file, and the UI will drive the real QuickNES libretro core directly in the browser.
+
+## Programmatic usage
 
 ```js
-import { LibretroHost } from "./src/libretro-host.js";
-import { createWasiImports } from "./src/wasi.js";
+import { LibretroHost } from "./web/libretro-host.js";
+import { createWasiImports } from "./web/wasi.js";
 
 const host = new LibretroHost({
   callbacks: {
-    videoRefresh(frame, width, height, pitch) {
-      // `frame` is a Uint8Array view into the core framebuffer.
-    },
-    audioSample(left, right) {
-      // Consume 16-bit PCM sample pair.
-    },
-    inputState({ port, device, index, id }) {
-      // Return the current state for the requested control.
-      return 0;
-    },
+    environment: (payload) => console.log(payload.cmd),
+    videoRefresh: (frame, width, height, pitch) => draw(frame, width, height, pitch),
+    audioSampleBatch: (samples, frames) => audio.enqueue(samples, frames),
+    inputState: ({ id }) => (id === 0 ? 1 : 0),
   },
 });
 
 const wasi = createWasiImports();
-await host.load(await fs.promises.readFile("./core.wasm"), { imports: wasi.imports });
+await host.load(await fetchCoreBytes(), { imports: wasi.imports });
 wasi.setMemory(host.memory);
 
 host.initializeCore();
-host.loadGame({ path: "game.rom", data: await fs.promises.readFile("./game.rom") });
-
-while (true) {
-  host.runFrame();
-}
+host.loadGame({ path: "game.nes", data: romBytes });
+host.runFrame();
 ```
 
-The host inspects the instantiated module, exports all callback entrypoints defined in `libretro.h`, and exposes helpers for allocating strings/buffers in the core's linear memory so that ROMs or save data can be passed across.
+### How the shim works
 
-### WASI imports
+Every core built from `cores/CMakeLists.txt` links against `libretro_shim.c`. The shim:
 
-`createWasiImports(options?)` returns a small runtime that keeps libretro cores compiled with `wasi-sdk` happy inside browsers or other JS environments that lack the System Interface. It returns an object with:
+1. Imports six host functions from the `libretro_host` module (`environment`, `video_refresh`, `audio_sample`, `audio_sample_batch`, `input_poll`, `input_state`).
+2. Registers its own static callbacks with the core’s `retro_set_*` entrypoints.
+3. Exports a single helper `libretro_host_init` that the frontend calls right after instantiation.
 
-- `imports`: pass this object into `LibretroHost.load({ imports })`.
-- `setMemory(memory)`: call this right after `host.load(...)` so the WASI shims can see the core's linear memory.
-- `initialize(instance)`: convenience helper that accepts the `WebAssembly.Instance` produced by `LibretroHost` and automatically binds the exported memory.
+Because of this, `LibretroHost` no longer grows the function table or fabricates `WebAssembly.Function` objects. Custom cores that already provide their own shim can still be loaded—just export `libretro_host_init` and ensure those six imports exist.
 
-You can optionally pass `{ args, env, stdout, stderr }` to mirror POSIX-style arguments, custom environment variables, or reroute stdout/stderr.
+### WASI runtime helper
 
-## Sample WASI core
+`createWasiImports(options)` returns:
 
-A minimal reference core lives in `core/minicore.c`. It draws a simple color band, emits silence, and treats every libretro callback exactly the way a real core would so you can validate the host.
+- `imports`: pass into `LibretroHost.load`.
+- `setMemory(memory)`: call immediately after loading.
+- `initialize(instance)`: optional convenience wrapper.
 
-Build it with [wasi-sdk](https://github.com/WebAssembly/wasi-sdk):
+Options allow overriding `args`, `env`, `stdout`, `stderr`, and `randomFill`.
 
-```bash
-export WASI_SDK_PATH=/path/to/wasi-sdk-24.0
-make
-```
+## Developing new cores
 
-The build produces `dist/minicore.wasm`, exporting all libretro entry points and the function table so `LibretroHost` can register callbacks. Point the host to that file (via `LibretroHost.fromFile("dist/minicore.wasm")`) to verify end-to-end behavior.
+1. Add sources under `cores/` or a new directory and update `cores/CMakeLists.txt` like the existing `quicknes_core` target.
+2. Link against `${LIBRETRO_SHIM_SOURCE}` to automatically get the host bridge.
+3. Re-run `cmake --build build` (or `npm run cores`) to regenerate `build/cores/<name>.wasm`.
+4. Point the browser demo (or your own frontend) at the new artifact.
 
-## QuickNES WASI core
+## Cleaning up / legacy files
 
-A fully-fledged libretro core is tracked via the `third_party/quicknes` submodule (licensed under GPLv2). The top-level `Makefile` can compile it directly with `wasi-sdk`:
-
-```bash
-export WASI_SDK_PATH=/path/to/wasi-sdk-24.0
-make dist/quicknes.wasm
-```
-
-The resulting `dist/quicknes.wasm` is the unmodified QuickNES core built for the `wasm32-wasi` target. Because it is compiled with wasi-sdk (not Emscripten), it can be loaded in Node.js or in the browser via the WASI shim shipped in `src/wasi.js`.
-
-## Browser example
-
-`examples/browser` hosts a complete front-end that:
-
-- Instantiates `dist/quicknes.wasm` with the WASI shim.
-- Streams RGB565 frames into a `<canvas>`.
-- Queues 44.1 kHz stereo audio via the Web Audio API.
-- Implements libretro environment callbacks so the core can configure pixel formats, options, and messages.
-
-Steps:
-
-```bash
-export WASI_SDK_PATH=/path/to/wasi-sdk-24.0
-make dist/quicknes.wasm
-npx http-server . -c-1  # or any static file server rooted at the repo
-```
-
-Then open `http://localhost:8080/examples/browser/` (adjust for your server) and load any homebrew/public-domain `.nes` ROM from your machine. Use the keyboard bindings listed in the UI (arrows/Z/X/Enter/Shift). The WASI shim ensures the QuickNES core behaves exactly like it would inside RetroArch, but fully inside the browser without Emscripten glue.
+The `old/` tree holds the previous Makefile-based experiment and will be removed once everything has been ported to CMake. Nothing under `web/` relies on those files anymore.

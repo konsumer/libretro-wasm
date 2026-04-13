@@ -36,24 +36,6 @@ const TABLE_ELEMENT_TYPE = (() => {
 
 const DEFAULT_TABLE_MIN = 2048;
 
-const CALLBACK_SIGNATURES = {
-  retro_set_environment: { parameters: ["i32", "i32"], results: ["i32"] },
-  retro_set_video_refresh: { parameters: ["i32", "i32", "i32", "i32"], results: [] },
-  retro_set_audio_sample: { parameters: ["i32", "i32"], results: [] },
-  retro_set_audio_sample_batch: { parameters: ["i32", "i32"], results: ["i32"] },
-  retro_set_input_poll: { parameters: [], results: [] },
-  retro_set_input_state: { parameters: ["i32", "i32", "i32", "i32"], results: ["i32"] },
-};
-
-const wasmTypeCodes = {
-  i32: 0x7f,
-  i64: 0x7e,
-  f32: 0x7d,
-  f64: 0x7c,
-};
-
-const thunkModuleCache = new Map();
-
 const mergeImports = (...sources) => {
   const merged = {};
   for (const source of sources) {
@@ -83,8 +65,8 @@ export class LibretroHost {
     this.module = null;
     this.exports = null;
     this.memory = null;
-    this.table = null;
     this._allocCursor = 0;
+    this._shimActive = false;
   }
 
   /**
@@ -106,7 +88,8 @@ export class LibretroHost {
    * @param {object} [options.imports]
    */
   async load(coreSource, options = {}) {
-    const mergedImports = mergeImports(this.imports, options.imports);
+    const shimImports = this._createLibretroHostImports();
+    const mergedImports = mergeImports(this.imports, options.imports, shimImports);
 
     let module;
     if (coreSource instanceof WebAssembly.Module) {
@@ -124,10 +107,9 @@ export class LibretroHost {
     this.instance = instance;
     this.exports = instance.exports;
     this.memory = this._resolveMemory();
-    this.table = this._resolveTable();
     this._callConstructors();
     this._initAllocator();
-    this._registerLibretroCallbacks();
+    this._configureCallbackBridge();
   }
 
   /**
@@ -285,18 +267,6 @@ export class LibretroHost {
     throw new Error("Unable to locate linear memory for core");
   }
 
-  _resolveTable() {
-    const exported = this.instance.exports.__indirect_function_table;
-    if (exported instanceof WebAssembly.Table) {
-      return exported;
-    }
-    const imported = this.imports.env?.__indirect_function_table;
-    if (imported instanceof WebAssembly.Table) {
-      return imported;
-    }
-    throw new Error("Unable to locate indirect function table");
-  }
-
   _initAllocator() {
     if (typeof this.exports.__heap_base === "object" && this.exports.__heap_base instanceof WebAssembly.Global) {
       this._allocCursor = this.exports.__heap_base.value;
@@ -335,13 +305,20 @@ export class LibretroHost {
     }
 
     const type = tableImport.type ?? {};
-    const minRequired = Math.max(type.minimum ?? 0, DEFAULT_TABLE_MIN);
+    const rawMin = type.minimum ?? type.limits?.minimum ?? tableImport.minimum;
+    const rawMax = type.maximum ?? type.limits?.maximum ?? tableImport.maximum;
+    const minRequired = rawMin ?? DEFAULT_TABLE_MIN;
     const desc = {
       element: type.element ?? TABLE_ELEMENT_TYPE,
       initial: minRequired,
     };
-    if (typeof type.maximum === "number") {
-      desc.maximum = Math.max(type.maximum, minRequired);
+    if (typeof rawMax === "number") {
+      desc.maximum = rawMax;
+      if (rawMax < minRequired) {
+        throw new Error(
+          `Provided table maximum (${rawMax}) is smaller than required initial (${minRequired}).`
+        );
+      }
     }
 
     table = new WebAssembly.Table(desc);
@@ -349,47 +326,36 @@ export class LibretroHost {
     return table;
   }
 
-  _registerLibretroCallbacks() {
-    if (!this.exports) return;
-
-    const register = (name, handler) => {
-      const setter = this.exports[name];
-      if (typeof setter !== "function") return;
-      const signature = CALLBACK_SIGNATURES[name] ?? null;
-      const slot = this._addHostFunction(handler, signature);
-      setter(slot >>> 0);
+  _createLibretroHostImports() {
+    return {
+      libretro_host: {
+        environment: (cmd, dataPtr) => (this._handleEnvironment(cmd >>> 0, dataPtr >>> 0) ? 1 : 0),
+        video_refresh: (dataPtr, width, height, pitch) => {
+          this._handleVideoRefresh(dataPtr >>> 0, width >>> 0, height >>> 0, pitch >>> 0);
+        },
+        audio_sample: (left, right) => {
+          this._handleAudioSample(left | 0, right | 0);
+        },
+        audio_sample_batch: (dataPtr, frames) =>
+          this._handleAudioSampleBatch(dataPtr >>> 0, frames >>> 0) | 0,
+        input_poll: () => {
+          this._handleInputPoll();
+        },
+        input_state: (port, device, index, id) =>
+          this._handleInputState(port >>> 0, device >>> 0, index >>> 0, id >>> 0) | 0,
+      },
     };
-
-    register("retro_set_environment", (cmd, dataPtr) => this._handleEnvironment(cmd >>> 0, dataPtr >>> 0));
-    register("retro_set_video_refresh", (dataPtr, width, height, pitch) =>
-      this._handleVideoRefresh(dataPtr >>> 0, width >>> 0, height >>> 0, pitch >>> 0)
-    );
-    register("retro_set_audio_sample", (left, right) => this._handleAudioSample(left | 0, right | 0));
-    register("retro_set_audio_sample_batch", (dataPtr, frames) =>
-      this._handleAudioSampleBatch(dataPtr >>> 0, frames >>> 0)
-    );
-    register("retro_set_input_poll", () => this._handleInputPoll());
-    register("retro_set_input_state", (port, device, index, id) =>
-      this._handleInputState(port >>> 0, device >>> 0, index >>> 0, id >>> 0)
-    );
   }
 
-  _addHostFunction(fn, signature = null) {
-    if (!(this.table instanceof WebAssembly.Table)) {
-      throw new Error("Function table is not available");
+  _configureCallbackBridge() {
+    const connector = this.exports?.libretro_host_init;
+    if (typeof connector !== "function") {
+      throw new Error(
+        "Core does not expose libretro_host_init; rebuild the core with the libretro_shim.c layer."
+      );
     }
-    const slot = this.table.grow(1);
-    const callable = this._wrapHostFunction(fn, signature);
-    this.table.set(slot, callable);
-    return slot;
-  }
-
-  _wrapHostFunction(fn, signature) {
-    if (!signature) {
-      return fn;
-    }
-    const wasmFn = createHostThunk(fn, signature);
-    return wasmFn ?? fn;
+    connector();
+    this._shimActive = true;
   }
 
   _handleEnvironment(cmd, dataPtr) {
@@ -450,132 +416,3 @@ export class LibretroHost {
 }
 
 export { RETRO_HW_FRAME_BUFFER_VALID };
-
-function createHostThunk(fn, signature) {
-  if (typeof WebAssembly.Function === "function") {
-    try {
-      return new WebAssembly.Function(signature, fn);
-    } catch (error) {
-      console.warn("WebAssembly.Function construction failed; falling back to thunk module", error);
-    }
-  }
-
-  try {
-    const module = getThunkModule(signature);
-    const instance = new WebAssembly.Instance(module, { host: { fn } });
-    return instance.exports.thunk;
-  } catch (error) {
-    console.error("Unable to fabricate WASM thunk for host callback", error);
-    return null;
-  }
-}
-
-function getThunkModule(signature) {
-  const key = `${signature.parameters?.join(",") ?? ""}->${signature.results?.join(",") ?? ""}`;
-  if (thunkModuleCache.has(key)) {
-    return thunkModuleCache.get(key);
-  }
-  const bytes = buildThunkBinary(signature);
-  const module = new WebAssembly.Module(bytes);
-  thunkModuleCache.set(key, module);
-  return module;
-}
-
-function buildThunkBinary(signature) {
-  const params = signature.parameters ?? [];
-  const results = signature.results ?? [];
-  const bytes = [];
-
-  const pushBytes = (array) => {
-    bytes.push(...array);
-  };
-
-  const writeName = (name, target) => {
-    const data = textEncoder.encode(name);
-    writeU32(target, data.length);
-    for (const byte of data) {
-      target.push(byte);
-    }
-  };
-
-  const pushSection = (id, payload) => {
-    bytes.push(id);
-    const size = [];
-    writeU32(size, payload.length);
-    bytes.push(...size, ...payload);
-  };
-
-  pushBytes([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
-
-  const typeEntry = [0x60];
-  const paramVec = [];
-  writeU32(paramVec, params.length);
-  for (const param of params) {
-    paramVec.push(wasmTypeCodes[param] ?? wasmTypeCodes.i32);
-  }
-  typeEntry.push(...paramVec);
-  const resultVec = [];
-  writeU32(resultVec, results.length);
-  for (const result of results) {
-    resultVec.push(wasmTypeCodes[result] ?? wasmTypeCodes.i32);
-  }
-  typeEntry.push(...resultVec);
-  const typePayload = [];
-  writeU32(typePayload, 1);
-  typePayload.push(...typeEntry);
-  pushSection(1, typePayload);
-
-  const importEntry = [];
-  writeName("host", importEntry);
-  writeName("fn", importEntry);
-  importEntry.push(0x00);
-  writeU32(importEntry, 0);
-  const importPayload = [];
-  writeU32(importPayload, 1);
-  importPayload.push(...importEntry);
-  pushSection(2, importPayload);
-
-  const funcPayload = [];
-  writeU32(funcPayload, 1);
-  writeU32(funcPayload, 0);
-  pushSection(3, funcPayload);
-
-  const exportEntry = [];
-  writeName("thunk", exportEntry);
-  exportEntry.push(0x00);
-  writeU32(exportEntry, 1);
-  const exportPayload = [];
-  writeU32(exportPayload, 1);
-  exportPayload.push(...exportEntry);
-  pushSection(7, exportPayload);
-
-  const instructions = [];
-  params.forEach((_, index) => {
-    instructions.push(0x20);
-    writeU32(instructions, index);
-  });
-  instructions.push(0x10);
-  writeU32(instructions, 0);
-  instructions.push(0x0b);
-
-  const body = [0x00, ...instructions];
-  const codeEntry = [];
-  writeU32(codeEntry, body.length);
-  codeEntry.push(...body);
-  const codePayload = [];
-  writeU32(codePayload, 1);
-  codePayload.push(...codeEntry);
-  pushSection(10, codePayload);
-
-  return new Uint8Array(bytes);
-}
-
-function writeU32(target, value) {
-  let remaining = value >>> 0;
-  do {
-    let byte = remaining & 0x7f;
-    remaining >>>= 7;
-    if (remaining) byte |= 0x80;
-    target.push(byte);
-  } while (remaining);
-}
