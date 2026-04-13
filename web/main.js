@@ -78,6 +78,14 @@ const CORE_LIBRARY = [
     extensions: [".a26", ".bin", ".rom", ".zip"],
     description: "Atari 2600",
   },
+  {
+    id: "beetle_pce_fast",
+    label: "Beetle PCE Fast (PCE/TG16)",
+    path: "./cores/beetle_pce_fast.wasm",
+    romLabel: "Load PCE/TG16 ROM",
+    extensions: [".pce", ".sgx", ".cue", ".ccd", ".chd", ".toc", ".m3u"],
+    description: "PC Engine / TurboGrafx-16 / SuperGrafx",
+  },
 ];
 
 const canvas = document.getElementById("screen");
@@ -246,6 +254,7 @@ async function bootstrap(coreConfig) {
   }
   const coreBytes = await response.arrayBuffer();
 
+  wasi = createWasiImports();
   env = createEnvironment();
   host = new LibretroHost({
     callbacks: {
@@ -256,11 +265,11 @@ async function bootstrap(coreConfig) {
       inputPoll: () => input.poll(),
       inputState: (query) => input.state(query),
     },
+    wasiBridge: wasi,
   });
 
-  wasi = createWasiImports();
   await host.load(coreBytes, { imports: wasi.imports });
-  wasi.setMemory(host.memory);
+  wasi.initialize(host.instance);
   host.initializeCore();
   synchronizeAvInfoFromCore();
   updateStatus(`${coreConfig.label} ready. Load a ROM to begin.`);
@@ -272,7 +281,8 @@ async function loadRom(file) {
     host.unloadGame();
   }
   pendingSamples = [];
-  const loaded = host.loadGame({ path: file.name, data });
+  const virtualPath = file.name.startsWith("/") ? file.name : `/virtual/${file.name}`;
+  const loaded = host.loadGame({ path: virtualPath, data });
   if (!loaded) {
     throw new Error("retro_load_game returned false");
   }

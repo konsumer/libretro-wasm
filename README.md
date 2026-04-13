@@ -10,6 +10,7 @@ Get a wasm core and native runtime from [releases](https://github.com/konsumer/l
 libretro_wasm quicknes.wasm rom.nes   # NES via QuickNES
 libretro_wasm gambatte.wasm rom.gb    # Game Boy / Color via Gambatte
 libretro_wasm stella2014.wasm rom.a26 # Atari 2600 via Stella 2014
+libretro_wasm beetle_pce_fast.wasm rom.pce # PC Engine / TurboGrafx-16 via Beetle PCE Fast
 ```
 
 ## Development
@@ -17,8 +18,8 @@ libretro_wasm stella2014.wasm rom.a26 # Atari 2600 via Stella 2014
 Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js and native. This repository provides:
 
 - **`web/libretro-host.js`** – a thin frontend that instantiates a core, feeds it games, and surfaces video/audio/input callbacks.
-- **`cores/`** – CMake targets that build the in-tree `minicore` sample plus upstream QuickNES (NES), Gambatte (GB/GBC), and Stella 2014 (Atari 2600) cores as `.wasm` binaries.
-- **`web/`** – a self-contained demo UI that loads whichever `.wasm` core you select (QuickNES, Gambatte, etc.), streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
+- **`cores/`** – CMake targets that build the in-tree `minicore` sample plus upstream QuickNES (NES), Gambatte (GB/GBC), Stella 2014 (Atari 2600), and Beetle PCE Fast (PC Engine / TurboGrafx-16 / SuperGrafx) cores as `.wasm` binaries.
+- **`web/`** – a self-contained demo UI that loads whichever `.wasm` core you select (QuickNES, Gambatte, Stella 2014, Beetle PCE Fast, etc.), streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
 - **`native/`** - a native runtime that can load the wasm core, and play it using raylib
 
 ## Requirements
@@ -33,7 +34,7 @@ Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and 
 npm run cores
 ```
 
-Artifacts live under `build/cores/cores/`. QuickNES, Gambatte, and Stella 2014 are fetched automatically with `FetchContent`, so no Git submodules are needed.
+Artifacts live under `build/cores/cores/`. QuickNES, Gambatte, Stella 2014, and Beetle PCE Fast are fetched automatically with `FetchContent`, so no Git submodules are needed.
 
 ## Building the native host
 
@@ -46,6 +47,7 @@ npm run native
 ./build/native/libretro_wasm build/cores/cores/quicknes.wasm path/to/rom.nes
 ./build/native/libretro_wasm build/cores/cores/gambatte.wasm path/to/rom.gb
 ./build/native/libretro_wasm build/cores/cores/stella2014.wasm path/to/rom.a26
+./build/native/libretro_wasm build/cores/cores/beetle_pce_fast.wasm path/to/rom.pce
 ```
 
 ### Native controls

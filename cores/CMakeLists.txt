@@ -137,6 +137,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stella2014)
 
+FetchContent_Declare(
+  beetle_pce_fast
+  URL https://github.com/libretro/beetle-pce-fast-libretro/archive/refs/heads/master.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(beetle_pce_fast)
+
 set(LIBRETRO_COMMON_INCLUDE_DIR ${libretro_common_SOURCE_DIR}/include)
 set(LIBRETRO_COMMON_UTILITY_SOURCES
   ${libretro_common_SOURCE_DIR}/compat/compat_posix_string.c
@@ -145,8 +152,13 @@ set(LIBRETRO_COMMON_UTILITY_SOURCES
   ${libretro_common_SOURCE_DIR}/compat/compat_strl.c
   ${libretro_common_SOURCE_DIR}/compat/fopen_utf8.c
   ${libretro_common_SOURCE_DIR}/encodings/encoding_utf.c
+  ${libretro_common_SOURCE_DIR}/encodings/encoding_crc32.c
   ${libretro_common_SOURCE_DIR}/file/file_path.c
   ${libretro_common_SOURCE_DIR}/file/file_path_io.c
+  ${libretro_common_SOURCE_DIR}/file/retro_dirent.c
+  ${libretro_common_SOURCE_DIR}/lists/dir_list.c
+  ${libretro_common_SOURCE_DIR}/lists/string_list.c
+  ${libretro_common_SOURCE_DIR}/memmap/memalign.c
   ${libretro_common_SOURCE_DIR}/streams/file_stream.c
   ${libretro_common_SOURCE_DIR}/streams/file_stream_transforms.c
   ${libretro_common_SOURCE_DIR}/string/stdstring.c
@@ -154,8 +166,11 @@ set(LIBRETRO_COMMON_UTILITY_SOURCES
   ${libretro_common_SOURCE_DIR}/vfs/vfs_implementation.c
 )
 
-# Shared shim source compiled into every core target.
-set(LIBRETRO_SHIM_SOURCE ${CMAKE_CURRENT_LIST_DIR}/libretro_shim.c)
+# Shared shim/support sources compiled into every core target.
+set(LIBRETRO_SHIM_SOURCE
+  ${CMAKE_CURRENT_LIST_DIR}/libretro_shim.c
+  ${CMAKE_CURRENT_LIST_DIR}/libretro_noexcept.c
+)
 
 # -----------------------------------------------------------------------------
 # minicore (reference core written in-tree)
@@ -382,3 +397,112 @@ target_compile_definitions(stella2014_core PRIVATE
 target_compile_options(stella2014_core PRIVATE -fno-exceptions -fno-rtti)
 target_link_libraries(stella2014_core PRIVATE m)
 configure_libretro_wasm_target(stella2014_core stella2014)
+
+# -----------------------------------------------------------------------------
+# Beetle PCE Fast (PC Engine / TurboGrafx-16)
+# -----------------------------------------------------------------------------
+set(BEETLE_PCE_FAST_DIR ${beetle_pce_fast_SOURCE_DIR})
+set(BEETLE_PCE_FAST_MEDNAFEN_DIR ${BEETLE_PCE_FAST_DIR}/mednafen)
+set(BEETLE_PCE_FAST_DEPS_DIR ${BEETLE_PCE_FAST_DIR}/deps)
+
+file(GLOB BEETLE_PCE_FAST_PCE_FAST_SOURCES
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/pce_fast/*.c
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/pce_fast/*.cpp
+)
+file(GLOB BEETLE_PCE_FAST_CDROM_SOURCES
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/cdrom/*.cpp
+)
+list(FILTER BEETLE_PCE_FAST_CDROM_SOURCES EXCLUDE REGEX "CDAFReader_MPC\.cpp$")
+file(GLOB BEETLE_PCE_FAST_MISC_CPP
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/general.cpp
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/FileStream.cpp
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/MemoryStream.cpp
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/Stream.cpp
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/mempatcher.cpp
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/okiadpcm.cpp
+)
+set(BEETLE_PCE_FAST_MISC_C
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/file.c
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/settings.c
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/state.c
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/mednafen-endian.c
+)
+file(GLOB BEETLE_PCE_FAST_SOUND_SOURCES
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/sound/*.c
+)
+file(GLOB BEETLE_PCE_FAST_TREMOR_SOURCES
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/tremor/*.c
+)
+file(GLOB BEETLE_PCE_FAST_HWMISC_SOURCES
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/hw_misc/arcade_card/*.cpp
+)
+file(GLOB BEETLE_PCE_FAST_DEPS_CHDR_SOURCES
+  ${BEETLE_PCE_FAST_DEPS_DIR}/libchdr/src/*.c
+)
+file(GLOB BEETLE_PCE_FAST_DEPS_LZMA_SOURCES
+  ${BEETLE_PCE_FAST_DEPS_DIR}/lzma-19.00/src/*.c
+)
+file(GLOB BEETLE_PCE_FAST_DEPS_ZLIB_SOURCES
+  ${BEETLE_PCE_FAST_DEPS_DIR}/zlib-1.2.11/*.c
+)
+file(GLOB BEETLE_PCE_FAST_DEPS_ZSTD_COMMON
+  ${BEETLE_PCE_FAST_DEPS_DIR}/zstd/lib/common/*.c
+)
+file(GLOB BEETLE_PCE_FAST_DEPS_ZSTD_DECOMPRESS
+  ${BEETLE_PCE_FAST_DEPS_DIR}/zstd/lib/decompress/*.c
+)
+
+set(BEETLE_PCE_FAST_SOURCES
+  ${BEETLE_PCE_FAST_DIR}/libretro.cpp
+  ${BEETLE_PCE_FAST_PCE_FAST_SOURCES}
+  ${BEETLE_PCE_FAST_CDROM_SOURCES}
+  ${BEETLE_PCE_FAST_MISC_CPP}
+  ${BEETLE_PCE_FAST_MISC_C}
+  ${BEETLE_PCE_FAST_SOUND_SOURCES}
+  ${BEETLE_PCE_FAST_TREMOR_SOURCES}
+  ${BEETLE_PCE_FAST_HWMISC_SOURCES}
+  ${BEETLE_PCE_FAST_DEPS_CHDR_SOURCES}
+  ${BEETLE_PCE_FAST_DEPS_LZMA_SOURCES}
+  ${BEETLE_PCE_FAST_DEPS_ZLIB_SOURCES}
+  ${BEETLE_PCE_FAST_DEPS_ZSTD_COMMON}
+  ${BEETLE_PCE_FAST_DEPS_ZSTD_DECOMPRESS}
+  ${LIBRETRO_COMMON_UTILITY_SOURCES}
+  ${LIBRETRO_SHIM_SOURCE}
+)
+
+add_executable(beetle_pce_fast_core ${BEETLE_PCE_FAST_SOURCES})
+target_compile_features(beetle_pce_fast_core PRIVATE cxx_std_17)
+target_include_directories(beetle_pce_fast_core PRIVATE
+  ${BEETLE_PCE_FAST_DIR}
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/include
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/hw_misc
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/hw_cpu
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/hw_sound
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/sound
+  ${BEETLE_PCE_FAST_MEDNAFEN_DIR}/tremor
+  ${BEETLE_PCE_FAST_DEPS_DIR}/libchdr/include
+  ${BEETLE_PCE_FAST_DEPS_DIR}/lzma-19.00/include
+  ${BEETLE_PCE_FAST_DEPS_DIR}/zlib-1.2.11
+  ${BEETLE_PCE_FAST_DEPS_DIR}/zstd/lib
+  ${LIBRETRO_COMMON_INCLUDE_DIR}
+)
+target_compile_definitions(beetle_pce_fast_core PRIVATE
+  __LIBRETRO__
+  HAVE_STDINT_H
+  HAVE_INTTYPES_H
+  FRONTEND_SUPPORTS_RGB565
+  WANT_STEREO_SOUND
+  NEED_TREMOR
+  NEED_CD
+  USE_CHEATS
+  _7ZIP_ST
+  ZSTD_DISABLE_ASM
+  INLINE=inline
+  MEDNAFEN_VERSION=\"0.9.26\"
+  MEDNAFEN_VERSION_NUMERIC=926
+)
+target_compile_options(beetle_pce_fast_core PRIVATE -fno-rtti)
+target_link_libraries(beetle_pce_fast_core PRIVATE m c++ c++abi)
+configure_libretro_wasm_target(beetle_pce_fast_core beetle_pce_fast)
+target_link_options(beetle_pce_fast_core PRIVATE -Wl,--initial-memory=6291456)

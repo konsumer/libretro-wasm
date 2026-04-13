@@ -48,12 +48,15 @@ export class LibretroHost {
   constructor(options = {}) {
     this.imports = options.imports ?? {};
     this.callbacks = { ...defaultCallbacks, ...(options.callbacks ?? {}) };
+    this.wasiBridge = options.wasiBridge ?? null;
 
     this.instance = null;
     this.module = null;
     this.exports = null;
     this.memory = null;
     this._allocCursor = 0;
+    this.systemInfo = null;
+    this.mountedFiles = new Set();
   }
 
   /**
@@ -96,6 +99,7 @@ export class LibretroHost {
     this._callConstructors();
     this._initAllocator();
     this._configureCallbackBridge();
+    this._cacheSystemInfo();
   }
 
   /**
@@ -136,8 +140,11 @@ export class LibretroHost {
     }
 
     if (!game) {
+      this._unmountAllFiles();
       return Boolean(this.exports.retro_load_game(0));
     }
+
+    this._unmountAllFiles();
 
     const pathPtr = game.path ? this._writeCString(game.path) : 0;
     const dataBytes = this._normalizeBuffer(game.data ?? new Uint8Array());
@@ -151,7 +158,17 @@ export class LibretroHost {
     this._writeU32(structPtr + 8, size);
     this._writeU32(structPtr + 12, metaPtr);
 
-    return Boolean(this.exports.retro_load_game(structPtr));
+    let mountedPath = null;
+    if (game.path && dataBytes.byteLength && this.wasiBridge?.mountFile) {
+      mountedPath = game.path;
+      this._mountVirtualFile(mountedPath, dataBytes);
+    }
+
+    const success = Boolean(this.exports.retro_load_game(structPtr));
+    if (!success && mountedPath) {
+      this._unmountFile(mountedPath);
+    }
+    return success;
   }
 
   getSystemAvInfo() {
@@ -186,6 +203,7 @@ export class LibretroHost {
     if (this.exports && typeof this.exports.retro_unload_game === "function") {
       this.exports.retro_unload_game();
     }
+    this._unmountAllFiles();
   }
 
   /**
@@ -235,6 +253,55 @@ export class LibretroHost {
   _align(value, alignment) {
     const mask = alignment - 1;
     return (value + mask) & ~mask;
+  }
+
+  _cacheSystemInfo() {
+    if (this.systemInfo || typeof this.exports?.retro_get_system_info !== "function") {
+      return;
+    }
+    const structSize = 24;
+    const ptr = this._alloc(structSize, 4);
+    new Uint8Array(this.memory.buffer, ptr, structSize).fill(0);
+    this.exports.retro_get_system_info(ptr);
+    const view = new DataView(this.memory.buffer);
+    const info = {
+      libraryName: this.readCString(view.getUint32(ptr, true)),
+      libraryVersion: this.readCString(view.getUint32(ptr + 4, true)),
+      validExtensions: this.readCString(view.getUint32(ptr + 8, true)),
+      needFullpath: Boolean(new Uint8Array(this.memory.buffer, ptr + 12, 1)[0]),
+      blockExtract: Boolean(new Uint8Array(this.memory.buffer, ptr + 13, 1)[0]),
+    };
+    this.systemInfo = info;
+  }
+
+  _mountVirtualFile(path, data) {
+    if (!path || !data || !this.wasiBridge?.mountFile) {
+      return;
+    }
+    this.wasiBridge.mountFile(path, data);
+    this.mountedFiles.add(path);
+  }
+
+  _unmountFile(path) {
+    if (!path || !this.mountedFiles.has(path)) {
+      return;
+    }
+    if (this.wasiBridge?.unmountFile) {
+      this.wasiBridge.unmountFile(path);
+    }
+    this.mountedFiles.delete(path);
+  }
+
+  _unmountAllFiles() {
+    if (!this.mountedFiles.size) {
+      return;
+    }
+    for (const path of this.mountedFiles) {
+      if (this.wasiBridge?.unmountFile) {
+        this.wasiBridge.unmountFile(path);
+      }
+    }
+    this.mountedFiles.clear();
   }
 
   _writeBytes(bytes) {
