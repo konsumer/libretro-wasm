@@ -50,6 +50,11 @@ FetchContent_Declare(wamr
 )
 FetchContent_MakeAvailable(wamr)
 
+if(WIN32)
+  target_compile_definitions(vmlib PRIVATE WINAPI_PARTITION_DESKTOP=0)
+  target_compile_definitions(libretro_wasm PRIVATE WINAPI_PARTITION_DESKTOP=0)
+endif()
+
 include (${wamr_SOURCE_DIR}/build-scripts/runtime_lib.cmake)
 
 add_executable(libretro_wasm libretro_wasm.c)
@@ -60,7 +65,3 @@ target_include_directories(libretro_wasm PRIVATE
   ${wamr_SOURCE_DIR}/core/shared/platform/common
 )
 
-if(WIN32)
-  target_compile_definitions(vmlib PRIVATE WINAPI_PARTITION_DESKTOP=0)
-  target_compile_definitions(libretro_wasm PRIVATE WINAPI_PARTITION_DESKTOP=0)
-endif()
