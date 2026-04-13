@@ -70,6 +70,14 @@ const CORE_LIBRARY = [
     extensions: [".gb", ".gbc"],
     description: "Game Boy / Game Boy Color",
   },
+  {
+    id: "stella2014",
+    label: "Stella 2014 (Atari 2600)",
+    path: "./cores/stella2014.wasm",
+    romLabel: "Load Atari 2600 ROM",
+    extensions: [".a26", ".bin", ".rom", ".zip"],
+    description: "Atari 2600",
+  },
 ];
 
 const canvas = document.getElementById("screen");
@@ -95,6 +103,7 @@ let pendingSamples = [];
 let currentCore = null;
 let coreSwitchPromise = null;
 let coreSampleRate = 44100;
+let coreAspectRatio = 256 / 240;
 let input = null;
 let audio = null;
 let env = null;
@@ -633,7 +642,7 @@ class AudioSink {
   constructor() {
     this.context = null;
     this.nextTime = 0;
-    this.minLeadSeconds = 0.08;
+    this.minLeadSeconds = 0.04;
     this.sourceSampleRate = 44100;
   }
 
@@ -643,6 +652,15 @@ class AudioSink {
       await ctx.resume();
     }
     this.nextTime = Math.max(this.nextTime, ctx.currentTime + this.minLeadSeconds);
+  }
+
+  setLeadSeconds(seconds) {
+    if (Number.isFinite(seconds) && seconds > 0) {
+      this.minLeadSeconds = seconds;
+      if (this.context) {
+        this.nextTime = Math.max(this.context.currentTime + this.minLeadSeconds, this.nextTime);
+      }
+    }
   }
 
   setSourceSampleRate(rate) {
@@ -727,6 +745,11 @@ function clampSample(value) {
   return Math.max(-1, Math.min(1, value));
 }
 
+function applyCanvasAspectRatio() {
+  if (!Number.isFinite(coreAspectRatio) || coreAspectRatio <= 0) return;
+  canvas?.style.setProperty("aspect-ratio", `${coreAspectRatio}`);
+}
+
 function handleAvInfoChange(info) {
   if (!info?.timing) return;
   const nextSampleRate = info.timing.sampleRate;
@@ -735,6 +758,13 @@ function handleAvInfoChange(info) {
     audio?.setSourceSampleRate(coreSampleRate);
     pendingSamples = [];
   }
+  const nextAspect = info.geometry?.aspectRatio;
+  if (Number.isFinite(nextAspect) && nextAspect > 0) {
+    coreAspectRatio = nextAspect;
+    applyCanvasAspectRatio();
+  }
+  const nextLead = info.timing?.fps ? Math.min(0.08, Math.max(0.02, 2 / info.timing.fps)) : 0.04;
+  audio?.setLeadSeconds(nextLead);
 }
 
 function createEnvironment() {
@@ -759,6 +789,7 @@ input = new InputManager();
 audio = new AudioSink();
 audio.setSourceSampleRate(coreSampleRate);
 env = createEnvironment();
+applyCanvasAspectRatio();
 
 initialize().catch((error) => {
   console.error(error);

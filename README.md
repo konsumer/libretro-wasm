@@ -9,6 +9,7 @@ Get a wasm core and native runtime from [releases](https://github.com/konsumer/l
 ```bash
 libretro_wasm quicknes.wasm rom.nes   # NES via QuickNES
 libretro_wasm gambatte.wasm rom.gb    # Game Boy / Color via Gambatte
+libretro_wasm stella2014.wasm rom.a26 # Atari 2600 via Stella 2014
 ```
 
 ## Development
@@ -16,7 +17,7 @@ libretro_wasm gambatte.wasm rom.gb    # Game Boy / Color via Gambatte
 Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js and native. This repository provides:
 
 - **`web/libretro-host.js`** – a thin frontend that instantiates a core, feeds it games, and surfaces video/audio/input callbacks.
-- **`cores/`** – CMake targets that build the in-tree `minicore` sample plus upstream QuickNES (NES) and Gambatte (GB/GBC) cores as `.wasm` binaries.
+- **`cores/`** – CMake targets that build the in-tree `minicore` sample plus upstream QuickNES (NES), Gambatte (GB/GBC), and Stella 2014 (Atari 2600) cores as `.wasm` binaries.
 - **`web/`** – a self-contained demo UI that loads whichever `.wasm` core you select (QuickNES, Gambatte, etc.), streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
 - **`native/`** - a native runtime that can load the wasm core, and play it using raylib
 
@@ -32,7 +33,7 @@ Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and 
 npm run cores
 ```
 
-Artifacts live under `build/cores/cores/`. QuickNES and Gambatte are fetched automatically with `FetchContent`, so no Git submodules are needed.
+Artifacts live under `build/cores/cores/`. QuickNES, Gambatte, and Stella 2014 are fetched automatically with `FetchContent`, so no Git submodules are needed.
 
 ## Building the native host
 
@@ -44,6 +45,7 @@ npm run native
 
 ./build/native/libretro_wasm build/cores/cores/quicknes.wasm path/to/rom.nes
 ./build/native/libretro_wasm build/cores/cores/gambatte.wasm path/to/rom.gb
+./build/native/libretro_wasm build/cores/cores/stella2014.wasm path/to/rom.a26
 ```
 
 ### Native controls

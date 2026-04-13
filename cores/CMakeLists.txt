@@ -130,7 +130,29 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(gambatte)
 
+FetchContent_Declare(
+  stella2014
+  URL https://github.com/libretro/stella2014-libretro/archive/refs/heads/master.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(stella2014)
+
 set(LIBRETRO_COMMON_INCLUDE_DIR ${libretro_common_SOURCE_DIR}/include)
+set(LIBRETRO_COMMON_UTILITY_SOURCES
+  ${libretro_common_SOURCE_DIR}/compat/compat_posix_string.c
+  ${libretro_common_SOURCE_DIR}/compat/compat_snprintf.c
+  ${libretro_common_SOURCE_DIR}/compat/compat_strcasestr.c
+  ${libretro_common_SOURCE_DIR}/compat/compat_strl.c
+  ${libretro_common_SOURCE_DIR}/compat/fopen_utf8.c
+  ${libretro_common_SOURCE_DIR}/encodings/encoding_utf.c
+  ${libretro_common_SOURCE_DIR}/file/file_path.c
+  ${libretro_common_SOURCE_DIR}/file/file_path_io.c
+  ${libretro_common_SOURCE_DIR}/streams/file_stream.c
+  ${libretro_common_SOURCE_DIR}/streams/file_stream_transforms.c
+  ${libretro_common_SOURCE_DIR}/string/stdstring.c
+  ${libretro_common_SOURCE_DIR}/time/rtime.c
+  ${libretro_common_SOURCE_DIR}/vfs/vfs_implementation.c
+)
 
 # Shared shim source compiled into every core target.
 set(LIBRETRO_SHIM_SOURCE ${CMAKE_CURRENT_LIST_DIR}/libretro_shim.c)
@@ -236,19 +258,7 @@ set(GAMBATTE_SOURCES
   ${GAMBATTE_LIBRETRO_DIR}/libretro.cpp
   ${GAMBATTE_LIBRETRO_DIR}/gambatte_log.c
   ${GAMBATTE_LIBRETRO_DIR}/blipper.c
-  ${libretro_common_SOURCE_DIR}/compat/compat_posix_string.c
-  ${libretro_common_SOURCE_DIR}/compat/compat_snprintf.c
-  ${libretro_common_SOURCE_DIR}/compat/compat_strcasestr.c
-  ${libretro_common_SOURCE_DIR}/compat/compat_strl.c
-  ${libretro_common_SOURCE_DIR}/compat/fopen_utf8.c
-  ${libretro_common_SOURCE_DIR}/encodings/encoding_utf.c
-  ${libretro_common_SOURCE_DIR}/file/file_path.c
-  ${libretro_common_SOURCE_DIR}/file/file_path_io.c
-  ${libretro_common_SOURCE_DIR}/streams/file_stream.c
-  ${libretro_common_SOURCE_DIR}/streams/file_stream_transforms.c
-  ${libretro_common_SOURCE_DIR}/string/stdstring.c
-  ${libretro_common_SOURCE_DIR}/time/rtime.c
-  ${libretro_common_SOURCE_DIR}/vfs/vfs_implementation.c
+  ${LIBRETRO_COMMON_UTILITY_SOURCES}
 )
 
 add_executable(gambatte_core ${GAMBATTE_SOURCES} ${LIBRETRO_SHIM_SOURCE})
@@ -272,3 +282,103 @@ target_compile_definitions(gambatte_core PRIVATE
 target_compile_options(gambatte_core PRIVATE -fno-exceptions -fno-rtti)
 target_link_libraries(gambatte_core PRIVATE m)
 configure_libretro_wasm_target(gambatte_core gambatte)
+
+# -----------------------------------------------------------------------------
+# Stella 2014 (Atari 2600)
+# -----------------------------------------------------------------------------
+set(STELLA2014_CORE_DIR ${stella2014_SOURCE_DIR}/stella)
+
+set(STELLA2014_SOURCES
+  ${STELLA2014_CORE_DIR}/src/common/Base.cxx
+  ${STELLA2014_CORE_DIR}/src/common/Sound.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/AtariVox.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Booster.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart0840.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart2K.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart3E.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart3F.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart4A50.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart4K.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Cart4KSC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartAR.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartBF.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartBFSC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartCM.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartCTY.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartCV.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartDF.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartDFSC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartDPC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartDPCPlus.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartE0.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartE7.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartEF.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartEFSC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartF0.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartF4.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartF4SC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartF6.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartF6SC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartF8.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartF8SC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartFA.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartFA2.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartFE.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartMC.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartSB.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartUA.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CartX07.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/CompuMate.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Console.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Control.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Driving.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Genesis.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Joystick.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Keyboard.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/KidVid.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/M6502.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/M6532.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/MD5.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/MindLink.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/MT24LC256.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/NullDev.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Paddles.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Props.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/PropsSet.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Random.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/SaveKey.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Serializer.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Settings.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/StateManager.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Switches.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/System.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/Thumbulator.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/TIA.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/TIASnd.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/TIATables.cxx
+  ${STELLA2014_CORE_DIR}/src/emucore/TrackBall.cxx
+  ${stella2014_SOURCE_DIR}/libretro.cxx
+  ${LIBRETRO_COMMON_UTILITY_SOURCES}
+)
+
+add_executable(stella2014_core ${STELLA2014_SOURCES} ${LIBRETRO_SHIM_SOURCE})
+target_compile_features(stella2014_core PRIVATE cxx_std_17)
+target_include_directories(stella2014_core PRIVATE
+  ${STELLA2014_CORE_DIR}
+  ${STELLA2014_CORE_DIR}/src
+  ${STELLA2014_CORE_DIR}/src/common
+  ${STELLA2014_CORE_DIR}/src/emucore
+  ${STELLA2014_CORE_DIR}/src/gui
+  ${STELLA2014_CORE_DIR}/stubs
+  ${LIBRETRO_COMMON_INCLUDE_DIR}
+)
+target_compile_definitions(stella2014_core PRIVATE
+  __LIBRETRO__
+  THUMB_SUPPORT
+  HAVE_STDINT_H
+  HAVE_INTTYPES_H
+)
+target_compile_options(stella2014_core PRIVATE -fno-exceptions -fno-rtti)
+target_link_libraries(stella2014_core PRIVATE m)
+configure_libretro_wasm_target(stella2014_core stella2014)

@@ -56,6 +56,7 @@ enum {
 enum {
     RETRO_ENVIRONMENT_SET_ROTATION = 1,
     RETRO_ENVIRONMENT_GET_CAN_DUPE = 3,
+    RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO = 32,
     RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY = 9,
     RETRO_ENVIRONMENT_SET_PIXEL_FORMAT = 10,
     RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS = 11,
@@ -148,6 +149,9 @@ typedef struct {
 
     double frame_rate;
     double sample_rate;
+    double display_aspect;
+    retro_system_av_info_host current_av_info;
+    bool av_info_valid;
 
     Texture2D texture;
     bool texture_ready;
@@ -273,6 +277,39 @@ static void service_audio_stream(int max_iterations, bool pad_if_empty) {
         iterations += 1;
     }
 }
+
+static void destroy_audio_stream(void) {
+    if (g_host.audio_ready) {
+        StopAudioStream(g_host.audio_stream);
+        UnloadAudioStream(g_host.audio_stream);
+        CloseAudioDevice();
+        g_host.audio_ready = false;
+    }
+    audio_ring_free(&g_host.audio_queue);
+    if (g_host.audio_chunk) {
+        free(g_host.audio_chunk);
+        g_host.audio_chunk = NULL;
+    }
+    g_host.audio_chunk_frames = 0;
+    g_host.audio_channels = 0;
+}
+
+static void update_frame_timing(double fps) {
+    if (fps <= 0.0) {
+        fps = 60.0;
+    }
+    g_host.frame_rate = fps;
+    if (IsWindowReady()) {
+        int target = (int)ceil(fps);
+        if (target <= 0) {
+            target = 60;
+        }
+        SetTargetFPS(target);
+    }
+}
+
+static void update_audio_sample_rate(double sample_rate);
+static void apply_system_av_info(const retro_system_av_info_host *info);
 
 static const char *path_basename(const char *path) {
     if (!path) {
@@ -590,14 +627,24 @@ static void render_frame(void) {
     if (g_host.texture_ready) {
         float win_w = (float)GetScreenWidth();
         float win_h = (float)GetScreenHeight();
-        float scale_x = win_w / (float)g_host.fb_width;
-        float scale_y = win_h / (float)g_host.fb_height;
-        float scale = fminf(scale_x, scale_y);
-        if (scale <= 0.0f) {
-            scale = 1.0f;
+        float aspect = 0.0f;
+        if (g_host.display_aspect > 0.0) {
+            aspect = (float)g_host.display_aspect;
+        } else if (g_host.fb_height > 0) {
+            aspect = (float)g_host.fb_width / (float)g_host.fb_height;
+        } else {
+            aspect = 4.0f / 3.0f;
         }
-        float draw_w = (float)g_host.fb_width * scale;
-        float draw_h = (float)g_host.fb_height * scale;
+        float draw_w = win_w;
+        float draw_h = draw_w / aspect;
+        if (draw_h > win_h) {
+            draw_h = win_h;
+            draw_w = draw_h * aspect;
+        }
+        if (draw_w <= 0.0f || draw_h <= 0.0f) {
+            draw_w = (float)g_host.fb_width;
+            draw_h = (float)g_host.fb_height;
+        }
         Rectangle src = { 0.0f, 0.0f, (float)g_host.fb_width, (float)g_host.fb_height };
         Rectangle dst = {
             (win_w - draw_w) * 0.5f,
@@ -659,22 +706,43 @@ static bool init_audio(double sample_rate) {
     return true;
 }
 
+static void update_audio_sample_rate(double sample_rate) {
+    if (sample_rate <= 0.0) {
+        sample_rate = g_host.sample_rate > 0.0 ? g_host.sample_rate : 48000.0;
+    }
+    if (g_host.audio_ready) {
+        if (fabs(g_host.sample_rate - sample_rate) < 1.0) {
+            g_host.sample_rate = sample_rate;
+            return;
+        }
+        destroy_audio_stream();
+    }
+    if (!init_audio(sample_rate)) {
+        g_host.sample_rate = sample_rate;
+    }
+}
+
+static void apply_system_av_info(const retro_system_av_info_host *info) {
+    if (!info) {
+        return;
+    }
+    g_host.current_av_info = *info;
+    g_host.av_info_valid = true;
+    if (info->geometry.aspect_ratio > 0.0f) {
+        g_host.display_aspect = (double)info->geometry.aspect_ratio;
+    } else if (info->geometry.base_height > 0) {
+        g_host.display_aspect = (double)info->geometry.base_width / (double)info->geometry.base_height;
+    }
+    update_frame_timing(info->timing.fps);
+    update_audio_sample_rate(info->timing.sample_rate);
+}
+
 static void pump_audio(void) {
     service_audio_stream(8, true);
 }
 
 static void shutdown_platform(void) {
-    if (g_host.audio_ready) {
-        StopAudioStream(g_host.audio_stream);
-        UnloadAudioStream(g_host.audio_stream);
-        CloseAudioDevice();
-        g_host.audio_ready = false;
-    }
-    audio_ring_free(&g_host.audio_queue);
-    free(g_host.audio_chunk);
-    g_host.audio_chunk = NULL;
-    g_host.audio_chunk_frames = 0;
-    g_host.audio_channels = 0;
+    destroy_audio_stream();
     if (g_host.texture_ready) {
         UnloadTexture(g_host.texture);
         g_host.texture_ready = false;
@@ -785,6 +853,18 @@ static int32_t host_environment(wasm_exec_env_t exec_env, int32_t cmd, int32_t d
         case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
         case RETRO_ENVIRONMENT_SET_ROTATION:
             return 1;
+        case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO: {
+            if (!data_ptr || !inst) {
+                return 0;
+            }
+            if (!wasm_runtime_validate_app_addr(inst, data_ptr, sizeof(retro_system_av_info_host))) {
+                return 0;
+            }
+            retro_system_av_info_host info;
+            memcpy(&info, wasm_runtime_addr_app_to_native(inst, data_ptr), sizeof(info));
+            apply_system_av_info(&info);
+            return 1;
+        }
         case RETRO_ENVIRONMENT_GET_CAN_DUPE: {
             if (data_ptr && inst && wasm_runtime_validate_app_addr(inst, data_ptr, sizeof(uint8_t))) {
                 uint8_t *flag = wasm_runtime_addr_app_to_native(inst, data_ptr);
@@ -1019,6 +1099,9 @@ static void setup_window(const retro_system_av_info_host *av_info, const char *c
 
 int main(int argc, char *argv[]) {
     SetTraceLogLevel(LOG_INFO);
+    g_host.frame_rate = 60.0;
+    g_host.sample_rate = 48000.0;
+    g_host.display_aspect = 4.0 / 3.0;
     if (argc != 3) {
         TraceLog(LOG_ERROR, "Usage: %s <core.wasm> <rom>", argv[0]);
         return 1;
@@ -1060,21 +1143,12 @@ int main(int argc, char *argv[]) {
     if (!fetch_system_av_info(&av_info)) {
         goto cleanup;
     }
+    apply_system_av_info(&av_info);
 
     char core_name[128] = {0};
     fetch_system_info(core_name, sizeof(core_name), NULL, 0);
     setup_window(&av_info, core_name, rom_path);
-
-    g_host.frame_rate = av_info.timing.fps > 0.0 ? av_info.timing.fps : 60.0;
-    int target_fps = (int)ceil(g_host.frame_rate);
-    if (target_fps <= 0) {
-        target_fps = 60;
-    }
-    SetTargetFPS(target_fps);
-
-    if (!init_audio(av_info.timing.sample_rate)) {
-        TraceLog(LOG_WARNING, "Audio disabled");
-    }
+    update_frame_timing(g_host.frame_rate);
 
     g_host.running = true;
     while (g_host.running && !WindowShouldClose()) {
