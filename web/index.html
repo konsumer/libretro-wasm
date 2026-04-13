@@ -1,225 +1,87 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Libretro WASI Demo</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600&display=swap"
-    rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script>
+    (() => {
+      const applyTheme = () => {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.dataset.theme = prefersDark ? 'dark' : 'light';
+      };
+      applyTheme();
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+    })();
+  </script>
   <style>
-    :root {
-      color-scheme: dark;
-      font-family: "Space Grotesk", system-ui, sans-serif;
-      --bg-dark: #050714;
-      --bg-light: #11172f;
-      --accent: #4ade80;
-      --accent-strong: #22d3ee;
-      --text-subtle: #a0aec0;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: radial-gradient(circle at top, #1f2a4b 0%, #050714 65%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 2rem;
-      color: #f8fafc;
-    }
-
-    .viewport {
-      width: min(960px, 100%);
-    }
-
-    .panel {
-      background: linear-gradient(165deg, rgba(17, 23, 47, 0.95), rgba(5, 7, 20, 0.98));
-      border: 1px solid rgba(148, 163, 184, 0.2);
-      border-radius: 24px;
-      padding: 2.5rem;
-      box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
-    }
-
-    h1 {
-      margin: 0 0 0.5rem;
-      font-size: clamp(1.8rem, 2.4vw, 2.4rem);
-      letter-spacing: -0.01em;
-    }
-
-    p {
-      margin: 0;
-      color: var(--text-subtle);
-      line-height: 1.5;
-    }
-
-    .controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem;
-      margin: 2rem 0 1rem;
-    }
-
-    .select-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
-      min-width: 200px;
-    }
-
-    .select-group span {
-      font-size: 0.85rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-subtle);
-    }
-
-    .select-group select {
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      border-radius: 999px;
-      padding: 0.9rem 1.75rem;
-      font-weight: 600;
-      background: var(--bg-light);
-      color: #f8fafc;
-      appearance: none;
-      background-image: linear-gradient(45deg, transparent 50%, var(--accent) 50%),
-        linear-gradient(135deg, var(--accent) 50%, transparent 50%);
-      background-position: calc(100% - 24px) calc(50% - 2px), calc(100% - 14px) calc(50% - 2px);
-      background-size: 10px 10px, 10px 10px;
-      background-repeat: no-repeat;
-      cursor: pointer;
-    }
-
-    .file-picker {
-      position: relative;
-      overflow: hidden;
-      border: 1px solid rgba(148, 163, 184, 0.4);
-      border-radius: 999px;
-      padding: 0.85rem 1.75rem;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      background: var(--bg-light);
-      cursor: pointer;
-      transition: border-color 150ms ease, color 150ms ease;
-    }
-
-    .file-picker:hover {
-      border-color: var(--accent-strong);
-      color: var(--accent-strong);
-    }
-
-    .file-picker input {
-      position: absolute;
-      inset: 0;
-      opacity: 0;
-      cursor: pointer;
-    }
-
-    button {
-      border: none;
-      border-radius: 999px;
-      padding: 0.85rem 1.75rem;
-      font-weight: 600;
-      background: var(--accent);
-      color: #05141f;
-      cursor: pointer;
-      transition: transform 150ms ease, box-shadow 150ms ease;
-    }
-
-    button:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 12px 30px rgba(74, 222, 128, 0.35);
-    }
-
-    .canvas-wrap {
-      margin: 1.5rem 0;
-      border-radius: 18px;
-      padding: 1rem;
-      background: radial-gradient(circle at top, rgba(59, 130, 246, 0.1), rgba(6, 11, 25, 0.8));
-      border: 1px solid rgba(59, 130, 246, 0.2);
-    }
-
     canvas {
-      display: block;
-      width: 100%;
-      height: auto;
       image-rendering: pixelated;
-      border-radius: 12px;
-      background: #000;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-    }
-
-    .meta {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 1rem;
-      font-size: 0.95rem;
-      color: var(--text-subtle);
-    }
-
-    .meta span {
-      font-weight: 600;
-      color: #f8fafc;
-    }
-
-    .hint {
-      margin-top: 1.25rem;
-      font-size: 0.9rem;
-      color: rgba(226, 232, 240, 0.8);
-    }
-
-    @media (max-width: 640px) {
-      body {
-        padding: 1.25rem;
-      }
-
-      .panel {
-        padding: 1.5rem;
-      }
-
-      .controls {
-        flex-direction: column;
-      }
     }
   </style>
 </head>
 
-<body>
-  <main class="viewport">
-    <section class="panel">
-      <header>
-        <h1>Libretro cores in the browser</h1>
-        <p>Pick any supported WebAssembly libretro core compiled with <strong>wasi-sdk</strong>, then stream frames,
-          audio, and inputs entirely from JavaScript.</p>
-      </header>
+<body class="min-h-screen bg-base-200 text-base-content">
+  <main class="flex min-h-screen items-center justify-center p-6">
+    <section class="w-full max-w-4xl">
+      <div class="card bg-base-100 shadow-2xl">
+        <div class="card-body gap-8">
+          <header class="space-y-2">
+            <h1 class="card-title text-3xl">Libretro cores in the browser</h1>
+            <p class="text-base-content/70">Pick any supported WebAssembly libretro core compiled with
+              <strong>wasi-sdk</strong>, then stream frames, audio, and inputs entirely from JavaScript.</p>
+          </header>
 
-      <div class="controls">
-        <label class="select-group">
-          <span>Core</span>
-          <select id="coreSelect"></select>
-        </label>
-        <label class="file-picker">
-          <span id="romLabel">Load ROM</span>
-          <input id="romInput" type="file" />
-        </label>
-        <button id="resetBtn" type="button">Reset Core</button>
+          <div class="flex flex-wrap gap-4">
+            <label class="form-control w-full max-w-xs">
+              <div class="label">
+                <span class="label-text uppercase tracking-wide text-xs">Core</span>
+              </div>
+              <select id="coreSelect" class="select select-bordered w-full"></select>
+            </label>
+
+            <label class="form-control flex-1">
+              <div class="label">
+                <span id="romLabel" class="label-text uppercase tracking-wide text-xs">Load ROM</span>
+              </div>
+              <input id="romInput" type="file" class="file-input file-input-bordered w-full" />
+            </label>
+
+            <div class="flex items-end">
+              <button id="resetBtn" type="button" class="btn btn-accent">Reset Core</button>
+            </div>
+          </div>
+
+          <div class="rounded-box border border-base-300 bg-base-200 p-4">
+            <canvas id="screen" width="256" height="240" class="w-full rounded-lg bg-black shadow-lg"></canvas>
+          </div>
+
+          <div class="grid gap-4 text-sm grid-cols-1">
+            <div class="stat bg-base-200 shadow">
+              <div class="stat-title">Status</div>
+              <div id="statusLine" class="stat-value text-xs whitespace-normal break-words">Loading core…</div>
+              <span id="coreName" class="sr-only" aria-hidden="true">—</span>
+              <span id="romName" class="sr-only" aria-hidden="true">—</span>
+            </div>
+          </div>
+
+          <div class="alert alert-info mt-2 text-sm">
+              <span class="flex flex-wrap gap-2 items-center text-base-content">
+                <span class="font-semibold">Keyboard:</span>
+              <span>D-Pad <kbd class="kbd kbd-sm bg-base-100 text-base-content">↑</kbd><kbd class="kbd kbd-sm bg-base-100 text-base-content">↓</kbd><kbd class="kbd kbd-sm bg-base-100 text-base-content">←</kbd><kbd class="kbd kbd-sm bg-base-100 text-base-content">→</kbd></span>
+              <span><kbd class="kbd kbd-sm bg-base-100 text-base-content">Z</kbd> = B</span>
+              <span><kbd class="kbd kbd-sm bg-base-100 text-base-content">X</kbd> = A</span>
+              <span><kbd class="kbd kbd-sm bg-base-100 text-base-content">A</kbd> = Y</span>
+              <span><kbd class="kbd kbd-sm bg-base-100 text-base-content">S</kbd> = X</span>
+              <span><kbd class="kbd kbd-sm bg-base-100 text-base-content">Enter</kbd> = Start</span>
+              <span><kbd class="kbd kbd-sm bg-base-100 text-base-content">Shift</kbd>/<kbd class="kbd kbd-sm bg-base-100 text-base-content">Space</kbd> = Select</span>
+              </span>
+          </div>
+        </div>
       </div>
-
-      <div class="canvas-wrap">
-        <canvas id="screen" width="256" height="240"></canvas>
-      </div>
-
-      <div class="meta">
-        <div>Core: <span id="coreName">—</span></div>
-        <div>ROM: <span id="romName">—</span></div>
-        <div>Status: <span id="statusLine">Loading core…</span></div>
-      </div>
-
-      <p class="hint">Keyboard: Arrow keys move, Z = B, X = A, A = Y, S = X, Enter = Start, Right Shift/Space = Select.
-      </p>
     </section>
   </main>
 
