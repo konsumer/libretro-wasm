@@ -25,7 +25,7 @@
 #define RUNTIME_HEAP_SIZE (16 * 1024 * 1024)
 #define AUDIO_MIN_CHUNK_FRAMES 512
 #define AUDIO_MAX_CHUNK_FRAMES 4096
-#define AUDIO_RING_CHUNKS 32
+#define AUDIO_RING_CHUNKS 64
 #define AUDIO_RING_MIN_CAPACITY 2048
 #define RETRO_HW_FRAME_BUFFER_VALID 0xffffffffu
 
@@ -181,6 +181,10 @@ static void audio_ring_free(AudioRingBuffer *rb) {
     rb->size = 0;
 }
 
+static size_t audio_ring_size(const AudioRingBuffer *rb) {
+    return rb->size;
+}
+
 static size_t audio_ring_tail(const AudioRingBuffer *rb) {
     if (rb->capacity == 0) {
         return 0;
@@ -240,6 +244,25 @@ static size_t audio_ring_pop(AudioRingBuffer *rb, int16_t *dest, size_t max_coun
         rb->head = 0;
     }
     return n;
+}
+
+static void service_audio_stream(int max_iterations, bool pad_if_empty) {
+    if (!g_host.audio_ready || !g_host.audio_chunk) {
+        return;
+    }
+    size_t chunk_samples = (size_t)g_host.audio_chunk_frames * (size_t)g_host.audio_channels;
+    int iterations = 0;
+    while (IsAudioStreamProcessed(g_host.audio_stream) && iterations < max_iterations) {
+        size_t popped = audio_ring_pop(&g_host.audio_queue, g_host.audio_chunk, chunk_samples);
+        if (!popped && !pad_if_empty) {
+            break;
+        }
+        if (popped < chunk_samples) {
+            memset(g_host.audio_chunk + popped, 0, (chunk_samples - popped) * sizeof(int16_t));
+        }
+        UpdateAudioStream(g_host.audio_stream, g_host.audio_chunk, g_host.audio_chunk_frames);
+        iterations += 1;
+    }
 }
 
 static const char *path_basename(const char *path) {
@@ -628,19 +651,7 @@ static bool init_audio(double sample_rate) {
 }
 
 static void pump_audio(void) {
-    if (!g_host.audio_ready) {
-        return;
-    }
-    size_t chunk_samples = (size_t)g_host.audio_chunk_frames * (size_t)g_host.audio_channels;
-    int safety_iterations = 0;
-    while (IsAudioStreamProcessed(g_host.audio_stream) && safety_iterations < 8) {
-        size_t popped = audio_ring_pop(&g_host.audio_queue, g_host.audio_chunk, chunk_samples);
-        if (popped < chunk_samples) {
-            memset(g_host.audio_chunk + popped, 0, (chunk_samples - popped) * sizeof(int16_t));
-        }
-        UpdateAudioStream(g_host.audio_stream, g_host.audio_chunk, g_host.audio_chunk_frames);
-        safety_iterations += 1;
-    }
+    service_audio_stream(8, true);
 }
 
 static void shutdown_platform(void) {
@@ -866,6 +877,7 @@ static void host_audio_sample(wasm_exec_env_t exec_env, int32_t left, int32_t ri
     if (!audio_ring_push(&g_host.audio_queue, pair, 2)) {
         TraceLog(LOG_WARNING, "Audio queue overflow");
     }
+    service_audio_stream(4, false);
 }
 
 static int32_t host_audio_sample_batch(wasm_exec_env_t exec_env, int32_t data_ptr, int32_t frames) {
@@ -883,6 +895,7 @@ static int32_t host_audio_sample_batch(wasm_exec_env_t exec_env, int32_t data_pt
         TraceLog(LOG_WARNING, "Audio queue overflow");
         return 0;
     }
+    service_audio_stream(4, false);
     return frames;
 }
 

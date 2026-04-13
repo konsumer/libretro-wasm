@@ -16,6 +16,7 @@
   "scripts": {
     "cores": "cmake  -S cores -B build/cores -G Ninja && cmake --build build/cores",
     "native": "cmake  -S native -B build/native -G Ninja && cmake --build build/native",
+    "clean": "npx -y rimraf build",
     "start": "npx -y live-server web --mount=/cores:./build/cores/cores/",
     "prestart": "npm run cores"
   }
