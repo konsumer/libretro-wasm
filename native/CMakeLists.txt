@@ -61,6 +61,12 @@ target_include_directories(libretro_wasm PRIVATE
 )
 
 if(WIN32)
-  target_compile_definitions(vmlib PRIVATE WINAPI_PARTITION_DESKTOP=0)
-  target_compile_definitions(libretro_wasm PRIVATE WINAPI_PARTITION_DESKTOP=0)
+  target_compile_definitions(vmlib PRIVATE
+    WINAPI_PARTITION_DESKTOP=1
+    WINAPI_FAMILY=WINAPI_FAMILY_DESKTOP_APP
+  )
+  target_compile_definitions(libretro_wasm PRIVATE
+    WINAPI_PARTITION_DESKTOP=1
+    WINAPI_FAMILY=WINAPI_FAMILY_DESKTOP_APP
+  )
 endif()
