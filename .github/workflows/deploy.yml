@@ -4,9 +4,12 @@ on:
   push:
     branches:
       - main
+  release:
+    types:
+      - published
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -35,13 +38,22 @@ jobs:
           cp build/cores/cores/*.wasm web/cores
 
       - name: Upload Pages artifact
+        if: github.event_name == 'push'
         uses: actions/upload-pages-artifact@v3
         with:
           path: web
 
+      - name: Upload WASM cores artifact
+        if: github.event_name == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-cores
+          path: build/cores/cores/*.wasm
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -49,3 +61,81 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  native-builds:
+    needs: build
+    if: github.event_name == 'release'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Ninja
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            choco install ninja -y
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            brew install ninja
+          else
+            sudo apt-get update
+            sudo apt-get install -y ninja-build
+          fi
+
+      - name: Set archive metadata
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            echo "ARCHIVE_NAME=libretro-wasm-windows.zip" >> $GITHUB_ENV
+            echo "BINARY_PATH=build/native/libretro_wasm.exe" >> $GITHUB_ENV
+          elif [[ "${{ runner.os }}" == "macOS" ]]; then
+            echo "ARCHIVE_NAME=libretro-wasm-macos.zip" >> $GITHUB_ENV
+            echo "BINARY_PATH=build/native/libretro_wasm" >> $GITHUB_ENV
+          else
+            echo "ARCHIVE_NAME=libretro-wasm-linux.zip" >> $GITHUB_ENV
+            echo "BINARY_PATH=build/native/libretro_wasm" >> $GITHUB_ENV
+          fi
+
+      - name: Build native runtime
+        run: |
+          npm run native
+
+      - name: Package native runtime
+        shell: bash
+        run: |
+          mkdir -p release
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            pwsh -Command "Compress-Archive -Path $env:BINARY_PATH -DestinationPath release/$env:ARCHIVE_NAME"
+          else
+            zip -j release/$ARCHIVE_NAME "$BINARY_PATH"
+          fi
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ runner.os }}
+          path: release/${{ env.ARCHIVE_NAME }}
+
+  publish-release:
+    needs: [build, native-builds]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          find release-assets -name '*.zip' -exec cp {} release/ \;
+          find release-assets -name '*.wasm' -exec cp {} release/ \;
+
+      - name: Upload assets to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*

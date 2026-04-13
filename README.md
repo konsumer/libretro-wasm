@@ -1,5 +1,17 @@
 # libretro-wasm host
 
+The idea here is no-recompile wasm libretro cores, that can be used on web or native.
+
+## Get Started
+
+Get a wasm core and native runtime from [releases](https://github.com/konsumer/libretro-wasm/releases).
+
+```bash
+libretro_wasm quicknes.wasm rom.nes
+```
+
+## Development
+
 Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js and native. This repository provides:
 
 - **`web/libretro-host.js`** – a thin frontend that instantiates a core, feeds it games, and surfaces video/audio/input callbacks.
