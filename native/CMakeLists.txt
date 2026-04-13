@@ -59,3 +59,7 @@ target_include_directories(libretro_wasm PRIVATE
   ${wamr_SOURCE_DIR}/core/shared/utils
   ${wamr_SOURCE_DIR}/core/shared/platform/common
 )
+
+if(WIN32)
+  target_compile_definitions(libretro_wasm PRIVATE WINAPI_PARTITION_DESKTOP=0)
+endif()
