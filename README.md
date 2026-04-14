@@ -11,8 +11,8 @@ libretro_wasm quicknes.wasm rom.nes   # NES via QuickNES
 libretro_wasm gambatte.wasm rom.gb    # Game Boy / Color via Gambatte
 libretro_wasm stella2014.wasm rom.a26 # Atari 2600 via Stella 2014
 libretro_wasm beetle_pce_fast.wasm rom.pce # PC Engine / TurboGrafx-16 via Beetle PCE Fast
-libretro_wasm genesis_plus_gx.wasm rom.md   # Sega Master System / Game Gear / Mega Drive via Genesis Plus GX
 libretro_wasm beetle_ngp.wasm rom.ngc       # Neo Geo Pocket / Color via Beetle NGP
+libretro_wasm smsplus_gx.wasm rom.gg        # Sega Master System / Game Gear via SMS Plus GX
 ```
 
 ## Development
@@ -20,8 +20,8 @@ libretro_wasm beetle_ngp.wasm rom.ngc       # Neo Geo Pocket / Color via Beetle 
 Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and Node.js and native. This repository provides:
 
 - **`web/libretro-host.js`** – a thin frontend that instantiates a core, feeds it games, and surfaces video/audio/input callbacks.
-- **`cores/`** – CMake targets that build the in-tree `minicore` sample plus upstream QuickNES (NES), Gambatte (GB/GBC), Stella 2014 (Atari 2600), Beetle PCE Fast (PC Engine / TurboGrafx-16 / SuperGrafx), Genesis Plus GX (Sega Master System / Game Gear / Mega Drive), and Beetle NGP (Neo Geo Pocket / Color) cores as `.wasm` binaries.
-- **`web/`** – a self-contained demo UI that loads whichever `.wasm` core you select (QuickNES, Gambatte, Stella 2014, Beetle PCE Fast, Genesis Plus GX, Beetle NGP, etc.), streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
+- **`cores/`** – CMake targets that build the in-tree `minicore` sample plus upstream QuickNES (NES), Gambatte (GB/GBC), Stella 2014 (Atari 2600), Beetle PCE Fast (PC Engine / TurboGrafx-16 / SuperGrafx), Beetle NGP (Neo Geo Pocket / Color), and SMS Plus GX (Sega Master System / Game Gear) cores as `.wasm` binaries.
+- **`web/`** – a self-contained demo UI that loads whichever `.wasm` core you select (QuickNES, Gambatte, Stella 2014, Beetle PCE Fast, Beetle NGP, SMS Plus GX, etc.), streams RGB565 frames to a `<canvas>`, queues audio, and handles libretro environment requests.
 - **`native/`** - a native runtime that can load the wasm core, and play it using raylib
 
 ## Requirements
@@ -36,7 +36,7 @@ Libretro cores compiled with `wasi-sdk` can run directly in modern browsers and 
 npm run cores
 ```
 
-Artifacts live under `build/cores/cores/`. QuickNES, Gambatte, Stella 2014, Beetle PCE Fast, Genesis Plus GX, and Beetle NGP are fetched automatically with `FetchContent`, so no Git submodules are needed.
+Artifacts live under `build/cores/cores/`. QuickNES, Gambatte, Stella 2014, Beetle PCE Fast, Beetle NGP, and SMS Plus GX are fetched automatically with `FetchContent`, so no Git submodules are needed.
 
 ## Building the native host
 
@@ -50,8 +50,8 @@ npm run native
 ./build/native/libretro_wasm build/cores/cores/gambatte.wasm path/to/rom.gb
 ./build/native/libretro_wasm build/cores/cores/stella2014.wasm path/to/rom.a26
 ./build/native/libretro_wasm build/cores/cores/beetle_pce_fast.wasm path/to/rom.pce
-./build/native/libretro_wasm build/cores/cores/genesis_plus_gx.wasm path/to/rom.md
 ./build/native/libretro_wasm build/cores/cores/beetle_ngp.wasm path/to/rom.ngc
+./build/native/libretro_wasm build/cores/cores/smsplus_gx.wasm path/to/rom.gg
 ```
 
 ### Native controls

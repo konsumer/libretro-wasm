@@ -145,13 +145,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(beetle_pce_fast)
 
 FetchContent_Declare(
-  genesis_plus_gx
-  URL https://github.com/libretro/Genesis-Plus-GX/archive/refs/heads/master.zip
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_MakeAvailable(genesis_plus_gx)
-
-FetchContent_Declare(
   beetle_ngp
   URL https://github.com/libretro/beetle-ngp-libretro/archive/refs/heads/master.zip
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
@@ -182,6 +175,7 @@ set(LIBRETRO_COMMON_UTILITY_SOURCES
   ${libretro_common_SOURCE_DIR}/memmap/memalign.c
   ${libretro_common_SOURCE_DIR}/streams/file_stream.c
   ${libretro_common_SOURCE_DIR}/streams/file_stream_transforms.c
+  ${libretro_common_SOURCE_DIR}/streams/memory_stream.c
   ${libretro_common_SOURCE_DIR}/string/stdstring.c
   ${libretro_common_SOURCE_DIR}/time/rtime.c
   ${libretro_common_SOURCE_DIR}/vfs/vfs_implementation.c
@@ -529,74 +523,6 @@ configure_libretro_wasm_target(beetle_pce_fast_core beetle_pce_fast)
 target_link_options(beetle_pce_fast_core PRIVATE -Wl,--initial-memory=6291456)
 
 # -----------------------------------------------------------------------------
-# Genesis Plus GX (Sega Master System / Game Gear / Mega Drive)
-# -----------------------------------------------------------------------------
-set(GPGX_DIR ${genesis_plus_gx_SOURCE_DIR})
-file(GLOB_RECURSE GENESIS_PLUS_GX_CORE_SOURCES CONFIGURE_DEPENDS
-  ${GPGX_DIR}/core/*.c
-)
-list(FILTER GENESIS_PLUS_GX_CORE_SOURCES EXCLUDE REGEX "core/cd_hw/libchdr/")
-list(FILTER GENESIS_PLUS_GX_CORE_SOURCES EXCLUDE REGEX "libchdr/deps/libFLAC/lpc_intrin_.*\\.c$")
-set(GENESIS_PLUS_GX_ZLIB_DIR ${GPGX_DIR}/libretro/deps/zlib-1.2.11)
-set(GENESIS_PLUS_GX_ZLIB_SOURCES
-  ${GENESIS_PLUS_GX_ZLIB_DIR}/adler32.c
-  ${GENESIS_PLUS_GX_ZLIB_DIR}/crc32.c
-  ${GENESIS_PLUS_GX_ZLIB_DIR}/inffast.c
-  ${GENESIS_PLUS_GX_ZLIB_DIR}/inflate.c
-  ${GENESIS_PLUS_GX_ZLIB_DIR}/inftrees.c
-  ${GENESIS_PLUS_GX_ZLIB_DIR}/zutil.c
-)
-
-set(GENESIS_PLUS_GX_SOURCES
-  ${GENESIS_PLUS_GX_CORE_SOURCES}
-  ${GPGX_DIR}/libretro/libretro.c
-  ${GENESIS_PLUS_GX_ZLIB_SOURCES}
-  ${LIBRETRO_COMMON_UTILITY_SOURCES}
-  ${LIBRETRO_SHIM_SOURCE}
-)
-
-add_executable(genesis_plus_gx_core ${GENESIS_PLUS_GX_SOURCES})
-target_compile_features(genesis_plus_gx_core PRIVATE c_std_99)
-target_include_directories(genesis_plus_gx_core PRIVATE
-  ${GPGX_DIR}/core
-  ${GPGX_DIR}/core/cart_hw
-  ${GPGX_DIR}/core/cart_hw/svp
-  ${GPGX_DIR}/core/cd_hw
-  ${GPGX_DIR}/core/input_hw
-  ${GPGX_DIR}/core/m68k
-  ${GPGX_DIR}/core/ntsc
-  ${GPGX_DIR}/core/sound
-  ${GPGX_DIR}/core/sound/minimp3
-  ${GPGX_DIR}/core/z80
-  ${GPGX_DIR}/libretro
-  ${GENESIS_PLUS_GX_ZLIB_DIR}
-  ${LIBRETRO_COMMON_INCLUDE_DIR}
-  ${CMAKE_CURRENT_LIST_DIR}/shims
-)
-target_compile_definitions(genesis_plus_gx_core PRIVATE
-  __LIBRETRO__
-  FRONTEND_SUPPORTS_RGB565
-  USE_16BPP_RENDERING
-  USE_LIBRETRO_VFS
-  USE_LIBTREMOR
-  USE_PER_SOUND_CHANNELS_CONFIG
-  LSB_FIRST
-  BYTE_ORDER=LITTLE_ENDIAN
-  HAVE_ZLIB
-  HAVE_STDINT_H
-  HAVE_INTTYPES_H
-  MAXROMSIZE=33554432
-  M68K_OVERCLOCK_SHIFT=20
-  Z80_OVERCLOCK_SHIFT=20
-  HAVE_YM3438_CORE
-  HAVE_OPLL_CORE
-)
-target_compile_options(genesis_plus_gx_core PRIVATE -fno-exceptions -fno-rtti)
-target_link_libraries(genesis_plus_gx_core PRIVATE m)
-configure_libretro_wasm_target(genesis_plus_gx_core genesis_plus_gx)
-target_link_options(genesis_plus_gx_core PRIVATE -Wl,--initial-memory=41943040)
-
-# -----------------------------------------------------------------------------
 # Beetle NeoPop (Neo Geo Pocket / Color)
 # -----------------------------------------------------------------------------
 set(BEETLE_NGP_ROOT ${beetle_ngp_SOURCE_DIR})
@@ -671,3 +597,63 @@ target_compile_options(beetle_ngp_core PRIVATE -fno-exceptions -fno-rtti)
 target_link_libraries(beetle_ngp_core PRIVATE m)
 configure_libretro_wasm_target(beetle_ngp_core beetle_ngp)
 target_link_options(beetle_ngp_core PRIVATE -Wl,--initial-memory=6291456)
+
+# -----------------------------------------------------------------------------
+# SMS Plus GX (Sega Master System / Game Gear)
+# -----------------------------------------------------------------------------
+set(SMSPLUS_GX_ROOT ${smsplus_gx_SOURCE_DIR})
+set(SMSPLUS_GX_SRC_DIR ${SMSPLUS_GX_ROOT}/source)
+
+set(SMSPLUS_GX_CORE_SOURCES
+  ${SMSPLUS_GX_SRC_DIR}/loadrom.c
+  ${SMSPLUS_GX_SRC_DIR}/memz80.c
+  ${SMSPLUS_GX_SRC_DIR}/pio.c
+  ${SMSPLUS_GX_SRC_DIR}/render.c
+  ${SMSPLUS_GX_SRC_DIR}/sms.c
+  ${SMSPLUS_GX_SRC_DIR}/system.c
+  ${SMSPLUS_GX_SRC_DIR}/tms.c
+  ${SMSPLUS_GX_SRC_DIR}/vdp.c
+  ${SMSPLUS_GX_SRC_DIR}/ntsc/sms_ntsc.c
+  ${SMSPLUS_GX_SRC_DIR}/sound/fmintf.c
+  ${SMSPLUS_GX_SRC_DIR}/sound/sound.c
+  ${SMSPLUS_GX_SRC_DIR}/sound/ym2413.c
+  ${SMSPLUS_GX_SRC_DIR}/sound/maxim_sn76489/sn76489.c
+  ${SMSPLUS_GX_SRC_DIR}/cpu_cores/z80/z80.c
+  ${SMSPLUS_GX_SRC_DIR}/ports/libretro/smsplus_libretro.c
+  ${SMSPLUS_GX_SRC_DIR}/unzip/fileio.c
+  ${SMSPLUS_GX_SRC_DIR}/unzip/ioapi.c
+  ${SMSPLUS_GX_SRC_DIR}/unzip/miniz.c
+  ${SMSPLUS_GX_SRC_DIR}/unzip/unzip.c
+)
+
+add_executable(smsplus_gx_core
+  ${SMSPLUS_GX_CORE_SOURCES}
+  ${LIBRETRO_COMMON_UTILITY_SOURCES}
+  ${LIBRETRO_SHIM_SOURCE}
+)
+target_compile_features(smsplus_gx_core PRIVATE c_std_99)
+target_include_directories(smsplus_gx_core PRIVATE
+  ${SMSPLUS_GX_SRC_DIR}
+  ${SMSPLUS_GX_SRC_DIR}/ports/libretro
+  ${SMSPLUS_GX_SRC_DIR}/cpu_cores/z80
+  ${SMSPLUS_GX_SRC_DIR}/sound
+  ${SMSPLUS_GX_SRC_DIR}/sound/maxim_sn76489
+  ${SMSPLUS_GX_SRC_DIR}/sound_output
+  ${SMSPLUS_GX_SRC_DIR}/unzip
+  ${SMSPLUS_GX_SRC_DIR}/ntsc
+  ${LIBRETRO_COMMON_INCLUDE_DIR}
+)
+target_compile_definitions(smsplus_gx_core PRIVATE
+  __LIBRETRO__
+  FRONTEND_SUPPORTS_RGB565
+  HAVE_STDINT_H
+  HAVE_INTTYPES_H
+  USE_Z80
+  MAXIM_PSG
+  HAVE_NTSC
+  LSB_FIRST
+  _WASI_EMULATED_SIGNAL
+)
+target_compile_options(smsplus_gx_core PRIVATE -fno-exceptions -fno-rtti)
+target_link_libraries(smsplus_gx_core PRIVATE m wasi-emulated-signal)
+configure_libretro_wasm_target(smsplus_gx_core smsplus_gx)

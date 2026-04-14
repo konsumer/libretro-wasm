@@ -1063,6 +1063,7 @@ static void host_audio_sample(wasm_exec_env_t exec_env, int32_t left, int32_t ri
 static int32_t host_audio_sample_batch(wasm_exec_env_t exec_env, int32_t data_ptr, int32_t frames);
 static void host_input_poll(wasm_exec_env_t exec_env);
 static int32_t host_input_state(wasm_exec_env_t exec_env, int32_t port, int32_t device, int32_t index, int32_t id);
+static void host_log(wasm_exec_env_t exec_env, int32_t level, int32_t message_ptr);
 
 static NativeSymbol native_symbols[] = {
     { "environment", (void *)host_environment, "(ii)i", NULL },
@@ -1071,6 +1072,7 @@ static NativeSymbol native_symbols[] = {
     { "audio_sample_batch", (void *)host_audio_sample_batch, "(ii)i", NULL },
     { "input_poll", (void *)host_input_poll, "()", NULL },
     { "input_state", (void *)host_input_state, "(iiii)i", NULL },
+    { "log", (void *)host_log, "(ii)", NULL },
 };
 
 static const int native_symbols_size = (int)(sizeof(native_symbols) / sizeof(native_symbols[0]));
@@ -1321,6 +1323,31 @@ static int32_t host_input_state(wasm_exec_env_t exec_env, int32_t port, int32_t 
         default:
             return 0;
     }
+}
+
+static void host_log(wasm_exec_env_t exec_env, int32_t level, int32_t message_ptr) {
+    wasm_module_inst_t inst = wasm_runtime_get_module_inst(exec_env);
+    const char *msg = wasm_cstring_inst(inst, (uint32_t)message_ptr);
+    if (!msg) {
+        return;
+    }
+    int raylib_level = LOG_INFO;
+    switch (level) {
+        case 0:
+            raylib_level = LOG_DEBUG;
+            break;
+        case 1:
+            raylib_level = LOG_INFO;
+            break;
+        case 2:
+            raylib_level = LOG_WARNING;
+            break;
+        case 3:
+        default:
+            raylib_level = LOG_ERROR;
+            break;
+    }
+    TraceLog(raylib_level, "%s", msg);
 }
 
 static bool init_runtime(void) {

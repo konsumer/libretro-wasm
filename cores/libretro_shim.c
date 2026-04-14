@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #if !defined(RETRO_CALLCONV)
 #define RETRO_CALLCONV
@@ -12,6 +14,15 @@ typedef void (RETRO_CALLCONV *retro_audio_sample_t)(int16_t left, int16_t right)
 typedef size_t (RETRO_CALLCONV *retro_audio_sample_batch_t)(const int16_t *data, size_t frames);
 typedef void (RETRO_CALLCONV *retro_input_poll_t)(void);
 typedef int16_t (RETRO_CALLCONV *retro_input_state_t)(unsigned port, unsigned device, unsigned index, unsigned id);
+typedef void (RETRO_CALLCONV *retro_log_printf_t)(int level, const char *fmt, ...);
+
+struct retro_log_callback {
+    retro_log_printf_t log;
+};
+
+enum {
+    RETRO_ENVIRONMENT_GET_LOG_INTERFACE = 27,
+};
 
 void retro_set_environment(retro_environment_t cb);
 void retro_set_video_refresh(retro_video_refresh_t cb);
@@ -38,8 +49,32 @@ void libretro_host_input_poll(void);
 __attribute__((import_module("libretro_host"), import_name("input_state")))
 int16_t libretro_host_input_state(unsigned port, unsigned device, unsigned index, unsigned id);
 
+__attribute__((import_module("libretro_host"), import_name("log")))
+void libretro_host_log(int level, const char *message);
+
+static void RETRO_CALLCONV shim_log(int level, const char *fmt, ...)
+{
+    if (!fmt)
+        return;
+
+    char buffer[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+
+    libretro_host_log(level, buffer);
+}
+
 static bool RETRO_CALLCONV shim_environment(unsigned cmd, void *data)
 {
+    if (cmd == RETRO_ENVIRONMENT_GET_LOG_INTERFACE) {
+        struct retro_log_callback *callback = (struct retro_log_callback *)data;
+        if (!callback)
+            return false;
+        callback->log = shim_log;
+        return true;
+    }
     return libretro_host_environment(cmd, data);
 }
 

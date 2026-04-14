@@ -22,6 +22,7 @@ const defaultCallbacks = {
   audioSampleBatch: () => 0,
   inputPoll: () => {},
   inputState: () => 0,
+  log: null,
 };
 
 const mergeImports = (...sources) => {
@@ -146,8 +147,10 @@ export class LibretroHost {
 
     this._unmountAllFiles();
 
+    const requiresFullpath = Boolean(this.systemInfo?.need_fullpath || this.systemInfo?.needFullpath);
     const pathPtr = game.path ? this._writeCString(game.path) : 0;
-    const dataBytes = this._normalizeBuffer(game.data ?? new Uint8Array());
+    const normalizedData = requiresFullpath ? new Uint8Array() : game.data ?? new Uint8Array();
+    const dataBytes = this._normalizeBuffer(normalizedData);
     const dataPtr = dataBytes.byteLength ? this._writeBytes(dataBytes) : 0;
     const size = dataBytes.byteLength >>> 0;
     const metaPtr = game.meta ? this._writeCString(game.meta) : 0;
@@ -159,9 +162,10 @@ export class LibretroHost {
     this._writeU32(structPtr + 12, metaPtr);
 
     let mountedPath = null;
-    if (game.path && dataBytes.byteLength && this.wasiBridge?.mountFile) {
+    if (game.path && this.wasiBridge?.mountFile) {
       mountedPath = game.path;
-      this._mountVirtualFile(mountedPath, dataBytes);
+      const mountData = dataBytes.byteLength ? dataBytes : this._normalizeBuffer(game.data ?? new Uint8Array());
+      this._mountVirtualFile(mountedPath, mountData);
     }
 
     const success = Boolean(this.exports.retro_load_game(structPtr));
@@ -379,6 +383,9 @@ export class LibretroHost {
         },
         input_state: (port, device, index, id) =>
           this._handleInputState(port >>> 0, device >>> 0, index >>> 0, id >>> 0) | 0,
+        log: (level, messagePtr) => {
+          this._handleLog(level | 0, messagePtr >>> 0);
+        },
       },
     };
   }
@@ -433,6 +440,21 @@ export class LibretroHost {
   _handleInputState(port, device, index, id) {
     const value = this.callbacks.inputState?.({ port, device, index, id, host: this }) ?? 0;
     return value | 0;
+  }
+
+  _handleLog(level, messagePtr) {
+    const message = this.readCString(messagePtr);
+    if (typeof this.callbacks.log === "function") {
+      this.callbacks.log(level, message, this);
+      return;
+    }
+    // Default behavior: route to console.
+    const prefix = ["DEBUG", "INFO", "WARN", "ERROR"][level] ?? "LOG";
+    if (level >= 3 && console.error) {
+      console.error(`[${prefix}] ${message}`);
+    } else {
+      console.log(`[${prefix}] ${message}`);
+    }
   }
 
   _assertExports() {

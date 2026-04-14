@@ -18,6 +18,10 @@
     "native": "cmake  -S native -B build/native -G Ninja && cmake --build build/native",
     "clean": "npx -y rimraf build",
     "start": "npx -y live-server web --mount=/cores:./build/cores/cores/",
-    "prestart": "npm run cores"
+    "prestart": "npm run cores",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "@easywasm/wasi": "^0.0.8"
   }
 }

@@ -1,4 +1,4 @@
-import WasiPreview1 from "https://esm.sh/@easywasm/wasi";
+import WasiPreview1 from "@easywasm/wasi";
 
 const FILETYPE_DIRECTORY = 3;
 const FILETYPE_REGULAR_FILE = 4;
