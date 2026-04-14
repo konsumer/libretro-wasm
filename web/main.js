@@ -86,6 +86,22 @@ const CORE_LIBRARY = [
     extensions: [".pce", ".sgx", ".cue", ".ccd", ".chd", ".toc", ".m3u"],
     description: "PC Engine / TurboGrafx-16 / SuperGrafx",
   },
+  {
+    id: "genesis_plus_gx",
+    label: "Genesis Plus GX (Sega 8/16-bit)",
+    path: "./cores/genesis_plus_gx.wasm",
+    romLabel: "Load Sega ROM",
+    extensions: [".md", ".gen", ".bin", ".smd", ".sms", ".gg"],
+    description: "Sega Master System / Game Gear / Mega Drive",
+  },
+  {
+    id: "beetle_ngp",
+    label: "Beetle NGP (Neo Geo Pocket)",
+    path: "./cores/beetle_ngp.wasm",
+    romLabel: "Load NGP/NGPC ROM",
+    extensions: [".ngp", ".ngc", ".npc", ".zip"],
+    description: "SNK Neo Geo Pocket / Color",
+  },
 ];
 
 const canvas = document.getElementById("screen");

@@ -31,8 +31,10 @@
 #define MODULE_STACK_SIZE (1024 * 1024 * 2)
 #define MODULE_HEAP_SIZE (1024 * 1024 * 10)
 #define RUNTIME_HEAP_SIZE (16 * 1024 * 1024)
-#define AUDIO_MIN_CHUNK_FRAMES 512
+#define AUDIO_MIN_CHUNK_FRAMES 256
 #define AUDIO_MAX_CHUNK_FRAMES 4096
+#define AUDIO_CHUNKS_PER_FRAME 2.0
+#define AUDIO_DEVICE_SAMPLE_RATE 48000.0
 #define AUDIO_RING_CHUNKS 64
 #define AUDIO_RING_MIN_CAPACITY 2048
 #define RETRO_HW_FRAME_BUFFER_VALID 0xffffffffu
@@ -124,6 +126,12 @@ typedef struct {
 } AudioRingBuffer;
 
 typedef struct {
+    int16_t *data;
+    size_t capacity;
+    size_t frames;
+} SampleFIFO;
+
+typedef struct {
     wasm_module_t module;
     wasm_module_inst_t module_inst;
     wasm_exec_env_t exec_env;
@@ -167,12 +175,20 @@ typedef struct {
     int16_t *audio_chunk;
     int audio_chunk_frames;
     int audio_channels;
+    bool audio_started;
+    double device_sample_rate;
+    double source_sample_rate;
+    double resample_ratio;
+    double resample_pos;
+    bool resample_initialized;
+    SampleFIFO resample_fifo;
 
     bool running;
     char window_title[256];
     char host_rom_path[PATH_MAX];
     char guest_rom_path[PATH_MAX];
     char rom_directory[PATH_MAX];
+    uint32_t option_ngp_language_ptr;
 } HostContext;
 
 static HostContext g_host = {0};
@@ -250,6 +266,13 @@ static bool audio_ring_push(AudioRingBuffer *rb, const int16_t *samples, size_t 
     return true;
 }
 
+static void reset_core_option_cache(void) {
+    if (g_host.option_ngp_language_ptr && g_host.module_inst) {
+        wasm_runtime_module_free(g_host.module_inst, g_host.option_ngp_language_ptr);
+    }
+    g_host.option_ngp_language_ptr = 0;
+}
+
 static size_t audio_ring_pop(AudioRingBuffer *rb, int16_t *dest, size_t max_count) {
     if (rb->size == 0 || max_count == 0) {
         return 0;
@@ -266,20 +289,173 @@ static size_t audio_ring_pop(AudioRingBuffer *rb, int16_t *dest, size_t max_coun
     return n;
 }
 
+static void sample_fifo_init(SampleFIFO *fifo) {
+    fifo->data = NULL;
+    fifo->capacity = 0;
+    fifo->frames = 0;
+}
+
+static void sample_fifo_free(SampleFIFO *fifo) {
+    free(fifo->data);
+    fifo->data = NULL;
+    fifo->capacity = 0;
+    fifo->frames = 0;
+}
+
+static bool sample_fifo_reserve(SampleFIFO *fifo, size_t frames) {
+    if (frames <= fifo->capacity) {
+        return true;
+    }
+    size_t new_capacity = fifo->capacity ? fifo->capacity : 1024;
+    while (new_capacity < frames) {
+        new_capacity *= 2;
+    }
+    size_t bytes = new_capacity * 2 * sizeof(int16_t);
+    int16_t *new_data = (int16_t *)realloc(fifo->data, bytes);
+    if (!new_data) {
+        return false;
+    }
+    fifo->data = new_data;
+    fifo->capacity = new_capacity;
+    return true;
+}
+
+static bool sample_fifo_append(SampleFIFO *fifo, const int16_t *samples, size_t frames) {
+    if (frames == 0) {
+        return true;
+    }
+    size_t needed_frames = fifo->frames + frames;
+    if (!sample_fifo_reserve(fifo, needed_frames)) {
+        return false;
+    }
+    memcpy(fifo->data + fifo->frames * 2, samples, frames * 2 * sizeof(int16_t));
+    fifo->frames = needed_frames;
+    return true;
+}
+
+static void sample_fifo_consume(SampleFIFO *fifo, size_t frames) {
+    if (frames == 0) {
+        return;
+    }
+    if (frames >= fifo->frames) {
+        fifo->frames = 0;
+        return;
+    }
+    size_t remaining_frames = fifo->frames - frames;
+    memmove(fifo->data, fifo->data + frames * 2, remaining_frames * 2 * sizeof(int16_t));
+    fifo->frames = remaining_frames;
+}
+
+static void sample_fifo_reset(SampleFIFO *fifo) {
+    fifo->frames = 0;
+}
+
+static void reset_resampler_state(void) {
+    sample_fifo_reset(&g_host.resample_fifo);
+    g_host.resample_pos = 0.0;
+    g_host.resample_initialized = false;
+}
+
+static void free_resampler_state(void) {
+    sample_fifo_free(&g_host.resample_fifo);
+    g_host.resample_pos = 0.0;
+    g_host.resample_initialized = false;
+}
+
+static void queue_resampled_audio(const int16_t *samples, size_t frames) {
+    if (!samples || frames == 0) {
+        return;
+    }
+    if (!g_host.audio_ready) {
+        return;
+    }
+    if (g_host.audio_channels <= 0) {
+        return;
+    }
+    if (g_host.source_sample_rate <= 0.0) {
+        g_host.source_sample_rate = g_host.device_sample_rate > 0.0 ? g_host.device_sample_rate : AUDIO_DEVICE_SAMPLE_RATE;
+    }
+    if (g_host.device_sample_rate <= 0.0) {
+        g_host.device_sample_rate = AUDIO_DEVICE_SAMPLE_RATE;
+    }
+    if (fabs(g_host.source_sample_rate - g_host.device_sample_rate) < 1.0) {
+        if (!audio_ring_push(&g_host.audio_queue, samples, frames * (size_t)g_host.audio_channels)) {
+            TraceLog(LOG_WARNING, "Audio queue overflow");
+        }
+        return;
+    }
+    if (!sample_fifo_append(&g_host.resample_fifo, samples, frames)) {
+        TraceLog(LOG_WARNING, "Unable to buffer resampler input");
+        return;
+    }
+    double ratio = g_host.resample_ratio;
+    if (ratio <= 0.0) {
+        ratio = g_host.source_sample_rate / g_host.device_sample_rate;
+        if (ratio <= 0.0) {
+            ratio = 1.0;
+        }
+        g_host.resample_ratio = ratio;
+    }
+    double pos = g_host.resample_pos;
+    size_t available = g_host.resample_fifo.frames;
+    while ((size_t)(pos + 1.0) < available) {
+        size_t idx = (size_t)pos;
+        double frac = pos - (double)idx;
+        int16_t *base = g_host.resample_fifo.data + idx * 2;
+        int16_t *next = g_host.resample_fifo.data + (idx + 1) * 2;
+        int32_t left = base[0] + (int32_t)((next[0] - base[0]) * frac);
+        int32_t right = base[1] + (int32_t)((next[1] - base[1]) * frac);
+        int16_t out[2] = { (int16_t)left, (int16_t)right };
+        if (!audio_ring_push(&g_host.audio_queue, out, 2)) {
+            TraceLog(LOG_WARNING, "Audio queue overflow");
+            break;
+        }
+        g_host.resample_initialized = true;
+        pos += ratio;
+        available = g_host.resample_fifo.frames;
+    }
+    size_t consume = (size_t)pos;
+    if (consume > 0) {
+        sample_fifo_consume(&g_host.resample_fifo, consume);
+        pos -= (double)consume;
+    }
+    g_host.resample_pos = pos;
+}
+
 static void service_audio_stream(int max_iterations, bool pad_if_empty) {
     if (!g_host.audio_ready || !g_host.audio_chunk) {
         return;
     }
     size_t chunk_samples = (size_t)g_host.audio_chunk_frames * (size_t)g_host.audio_channels;
     int iterations = 0;
+    bool allow_padding = pad_if_empty && !g_host.audio_started;
     while (IsAudioStreamProcessed(g_host.audio_stream) && iterations < max_iterations) {
-        size_t popped = audio_ring_pop(&g_host.audio_queue, g_host.audio_chunk, chunk_samples);
-        if (!popped && !pad_if_empty) {
+        size_t available = audio_ring_size(&g_host.audio_queue);
+        size_t popped = 0;
+
+        if (available >= chunk_samples) {
+            popped = audio_ring_pop(&g_host.audio_queue, g_host.audio_chunk, chunk_samples);
+        } else if (allow_padding) {
+            if (available > 0) {
+                popped = audio_ring_pop(&g_host.audio_queue, g_host.audio_chunk, available);
+            }
+        } else {
             break;
         }
+
+        if (!popped && !allow_padding) {
+            break;
+        }
+
         if (popped < chunk_samples) {
             memset(g_host.audio_chunk + popped, 0, (chunk_samples - popped) * sizeof(int16_t));
         }
+
+        if (popped == chunk_samples) {
+            g_host.audio_started = true;
+            allow_padding = pad_if_empty && !g_host.audio_started;
+        }
+
         UpdateAudioStream(g_host.audio_stream, g_host.audio_chunk, g_host.audio_chunk_frames);
         iterations += 1;
     }
@@ -299,6 +475,8 @@ static void destroy_audio_stream(void) {
     }
     g_host.audio_chunk_frames = 0;
     g_host.audio_channels = 0;
+    g_host.audio_started = false;
+    free_resampler_state();
 }
 
 static void update_frame_timing(double fps) {
@@ -738,12 +916,22 @@ static void render_frame(void) {
     EndDrawing();
 }
 
-static bool init_audio(double sample_rate) {
-    if (sample_rate <= 0.0) {
-        sample_rate = 48000.0;
+static bool init_audio(double device_rate) {
+    if (device_rate <= 0.0) {
+        device_rate = AUDIO_DEVICE_SAMPLE_RATE;
     }
+    g_host.device_sample_rate = device_rate;
+    if (!g_host.resample_fifo.data && g_host.resample_fifo.capacity == 0) {
+        sample_fifo_init(&g_host.resample_fifo);
+    }
+    reset_resampler_state();
     int channels = 2;
-    int chunk_frames = (int)ceil(sample_rate / (g_host.frame_rate > 0.0 ? g_host.frame_rate : 60.0));
+    double frames_per_second = g_host.frame_rate > 0.0 ? g_host.frame_rate : 60.0;
+    double chunks_per_frame = AUDIO_CHUNKS_PER_FRAME;
+    if (chunks_per_frame <= 0.0) {
+        chunks_per_frame = 1.0;
+    }
+    int chunk_frames = (int)ceil(device_rate / (frames_per_second * chunks_per_frame));
     if (chunk_frames < AUDIO_MIN_CHUNK_FRAMES) {
         chunk_frames = AUDIO_MIN_CHUNK_FRAMES;
     } else if (chunk_frames > AUDIO_MAX_CHUNK_FRAMES) {
@@ -764,7 +952,7 @@ static bool init_audio(double sample_rate) {
     memset(g_host.audio_chunk, 0, chunk_samples * sizeof(int16_t));
     InitAudioDevice();
     SetAudioStreamBufferSizeDefault(chunk_frames);
-    AudioStream stream = LoadAudioStream((unsigned int)sample_rate, 16, channels);
+    AudioStream stream = LoadAudioStream((unsigned int)device_rate, 16, channels);
     if (!IsAudioStreamValid(stream)) {
         TraceLog(LOG_WARNING, "Unable to create audio stream");
         CloseAudioDevice();
@@ -779,26 +967,29 @@ static bool init_audio(double sample_rate) {
     }
     g_host.audio_stream = stream;
     g_host.audio_ready = true;
-    g_host.sample_rate = sample_rate;
+    g_host.sample_rate = device_rate;
     g_host.audio_chunk_frames = chunk_frames;
     g_host.audio_channels = channels;
+    g_host.audio_started = false;
     return true;
 }
 
 static void update_audio_sample_rate(double sample_rate) {
     if (sample_rate <= 0.0) {
-        sample_rate = g_host.sample_rate > 0.0 ? g_host.sample_rate : 48000.0;
+        sample_rate = g_host.source_sample_rate > 0.0 ? g_host.source_sample_rate : AUDIO_DEVICE_SAMPLE_RATE;
     }
-    if (g_host.audio_ready) {
-        if (fabs(g_host.sample_rate - sample_rate) < 1.0) {
-            g_host.sample_rate = sample_rate;
+    if (!g_host.audio_ready) {
+        if (!init_audio(AUDIO_DEVICE_SAMPLE_RATE)) {
+            TraceLog(LOG_WARNING, "Audio disabled (init failed)");
             return;
         }
-        destroy_audio_stream();
     }
-    if (!init_audio(sample_rate)) {
-        g_host.sample_rate = sample_rate;
+    g_host.source_sample_rate = sample_rate;
+    if (g_host.device_sample_rate <= 0.0) {
+        g_host.device_sample_rate = AUDIO_DEVICE_SAMPLE_RATE;
     }
+    g_host.resample_ratio = g_host.source_sample_rate / g_host.device_sample_rate;
+    reset_resampler_state();
 }
 
 static void apply_system_av_info(const retro_system_av_info_host *info) {
@@ -836,6 +1027,7 @@ static void shutdown_platform(void) {
 
 static void shutdown_runtime(void) {
     unload_game();
+    reset_core_option_cache();
     if (g_host.fn_retro_deinit) {
         call_noargs(g_host.fn_retro_deinit, "retro_deinit");
     }
@@ -973,10 +1165,32 @@ static int32_t host_environment(wasm_exec_env_t exec_env, int32_t cmd, int32_t d
             *out = 1 | 2;
             return 1;
         }
-        case RETRO_ENVIRONMENT_GET_VARIABLE:
         case RETRO_ENVIRONMENT_SET_VARIABLES:
         case RETRO_ENVIRONMENT_SET_VARIABLE:
-            return 0;
+            return 1;
+        case RETRO_ENVIRONMENT_GET_VARIABLE: {
+            if (!data_ptr || !inst) {
+                return 0;
+            }
+            if (!wasm_runtime_validate_app_addr(inst, data_ptr, sizeof(uint32_t) * 2)) {
+                return 0;
+            }
+            uint32_t *fields = wasm_runtime_addr_app_to_native(inst, data_ptr);
+            const char *key = wasm_cstring_inst(inst, fields[0]);
+            if (!key) {
+                fields[1] = 0;
+                return 1;
+            }
+            if (strcmp(key, "ngp_language") == 0) {
+                if (!g_host.option_ngp_language_ptr) {
+                    g_host.option_ngp_language_ptr = wasm_write_cstring("english");
+                }
+                fields[1] = g_host.option_ngp_language_ptr;
+                return 1;
+            }
+            fields[1] = 0;
+            return 1;
+        }
         case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE: {
             if (data_ptr && inst && wasm_runtime_validate_app_addr(inst, data_ptr, sizeof(uint8_t))) {
                 uint8_t *flag = wasm_runtime_addr_app_to_native(inst, data_ptr);
@@ -1049,9 +1263,7 @@ static void host_audio_sample(wasm_exec_env_t exec_env, int32_t left, int32_t ri
         return;
     }
     int16_t pair[2] = { (int16_t)left, (int16_t)right };
-    if (!audio_ring_push(&g_host.audio_queue, pair, 2)) {
-        TraceLog(LOG_WARNING, "Audio queue overflow");
-    }
+    queue_resampled_audio(pair, 1);
     service_audio_stream(4, false);
 }
 
@@ -1066,10 +1278,7 @@ static int32_t host_audio_sample_batch(wasm_exec_env_t exec_env, int32_t data_pt
         return 0;
     }
     const int16_t *src = wasm_runtime_addr_app_to_native(inst, data_ptr);
-    if (!audio_ring_push(&g_host.audio_queue, src, samples)) {
-        TraceLog(LOG_WARNING, "Audio queue overflow");
-        return 0;
-    }
+    queue_resampled_audio(src, (size_t)frames);
     service_audio_stream(4, false);
     return frames;
 }
@@ -1154,6 +1363,7 @@ static bool instantiate_module(const char *rom_dir) {
         TraceLog(LOG_ERROR, "Unable to instantiate core: %s", error_buf);
         return false;
     }
+    g_host.option_ngp_language_ptr = 0;
     g_host.exec_env = wasm_runtime_create_exec_env(g_host.module_inst, MODULE_STACK_SIZE);
     if (!g_host.exec_env) {
         TraceLog(LOG_ERROR, "Unable to create execution environment");

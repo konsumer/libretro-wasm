@@ -144,6 +144,27 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(beetle_pce_fast)
 
+FetchContent_Declare(
+  genesis_plus_gx
+  URL https://github.com/libretro/Genesis-Plus-GX/archive/refs/heads/master.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(genesis_plus_gx)
+
+FetchContent_Declare(
+  beetle_ngp
+  URL https://github.com/libretro/beetle-ngp-libretro/archive/refs/heads/master.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(beetle_ngp)
+
+FetchContent_Declare(
+  smsplus_gx
+  URL https://github.com/libretro/smsplus-gx/archive/refs/heads/master.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(smsplus_gx)
+
 set(LIBRETRO_COMMON_INCLUDE_DIR ${libretro_common_SOURCE_DIR}/include)
 set(LIBRETRO_COMMON_UTILITY_SOURCES
   ${libretro_common_SOURCE_DIR}/compat/compat_posix_string.c
@@ -506,3 +527,147 @@ target_compile_options(beetle_pce_fast_core PRIVATE -fno-rtti)
 target_link_libraries(beetle_pce_fast_core PRIVATE m c++ c++abi)
 configure_libretro_wasm_target(beetle_pce_fast_core beetle_pce_fast)
 target_link_options(beetle_pce_fast_core PRIVATE -Wl,--initial-memory=6291456)
+
+# -----------------------------------------------------------------------------
+# Genesis Plus GX (Sega Master System / Game Gear / Mega Drive)
+# -----------------------------------------------------------------------------
+set(GPGX_DIR ${genesis_plus_gx_SOURCE_DIR})
+file(GLOB_RECURSE GENESIS_PLUS_GX_CORE_SOURCES CONFIGURE_DEPENDS
+  ${GPGX_DIR}/core/*.c
+)
+list(FILTER GENESIS_PLUS_GX_CORE_SOURCES EXCLUDE REGEX "core/cd_hw/libchdr/")
+list(FILTER GENESIS_PLUS_GX_CORE_SOURCES EXCLUDE REGEX "libchdr/deps/libFLAC/lpc_intrin_.*\\.c$")
+set(GENESIS_PLUS_GX_ZLIB_DIR ${GPGX_DIR}/libretro/deps/zlib-1.2.11)
+set(GENESIS_PLUS_GX_ZLIB_SOURCES
+  ${GENESIS_PLUS_GX_ZLIB_DIR}/adler32.c
+  ${GENESIS_PLUS_GX_ZLIB_DIR}/crc32.c
+  ${GENESIS_PLUS_GX_ZLIB_DIR}/inffast.c
+  ${GENESIS_PLUS_GX_ZLIB_DIR}/inflate.c
+  ${GENESIS_PLUS_GX_ZLIB_DIR}/inftrees.c
+  ${GENESIS_PLUS_GX_ZLIB_DIR}/zutil.c
+)
+
+set(GENESIS_PLUS_GX_SOURCES
+  ${GENESIS_PLUS_GX_CORE_SOURCES}
+  ${GPGX_DIR}/libretro/libretro.c
+  ${GENESIS_PLUS_GX_ZLIB_SOURCES}
+  ${LIBRETRO_COMMON_UTILITY_SOURCES}
+  ${LIBRETRO_SHIM_SOURCE}
+)
+
+add_executable(genesis_plus_gx_core ${GENESIS_PLUS_GX_SOURCES})
+target_compile_features(genesis_plus_gx_core PRIVATE c_std_99)
+target_include_directories(genesis_plus_gx_core PRIVATE
+  ${GPGX_DIR}/core
+  ${GPGX_DIR}/core/cart_hw
+  ${GPGX_DIR}/core/cart_hw/svp
+  ${GPGX_DIR}/core/cd_hw
+  ${GPGX_DIR}/core/input_hw
+  ${GPGX_DIR}/core/m68k
+  ${GPGX_DIR}/core/ntsc
+  ${GPGX_DIR}/core/sound
+  ${GPGX_DIR}/core/sound/minimp3
+  ${GPGX_DIR}/core/z80
+  ${GPGX_DIR}/libretro
+  ${GENESIS_PLUS_GX_ZLIB_DIR}
+  ${LIBRETRO_COMMON_INCLUDE_DIR}
+  ${CMAKE_CURRENT_LIST_DIR}/shims
+)
+target_compile_definitions(genesis_plus_gx_core PRIVATE
+  __LIBRETRO__
+  FRONTEND_SUPPORTS_RGB565
+  USE_16BPP_RENDERING
+  USE_LIBRETRO_VFS
+  USE_LIBTREMOR
+  USE_PER_SOUND_CHANNELS_CONFIG
+  LSB_FIRST
+  BYTE_ORDER=LITTLE_ENDIAN
+  HAVE_ZLIB
+  HAVE_STDINT_H
+  HAVE_INTTYPES_H
+  MAXROMSIZE=33554432
+  M68K_OVERCLOCK_SHIFT=20
+  Z80_OVERCLOCK_SHIFT=20
+  HAVE_YM3438_CORE
+  HAVE_OPLL_CORE
+)
+target_compile_options(genesis_plus_gx_core PRIVATE -fno-exceptions -fno-rtti)
+target_link_libraries(genesis_plus_gx_core PRIVATE m)
+configure_libretro_wasm_target(genesis_plus_gx_core genesis_plus_gx)
+target_link_options(genesis_plus_gx_core PRIVATE -Wl,--initial-memory=41943040)
+
+# -----------------------------------------------------------------------------
+# Beetle NeoPop (Neo Geo Pocket / Color)
+# -----------------------------------------------------------------------------
+set(BEETLE_NGP_ROOT ${beetle_ngp_SOURCE_DIR})
+set(BEETLE_NGP_MEDNAFEN_DIR ${BEETLE_NGP_ROOT}/mednafen)
+set(BEETLE_NGP_CORE_DIR ${BEETLE_NGP_MEDNAFEN_DIR}/ngp)
+
+set(BEETLE_NGP_C_SOURCES
+  ${BEETLE_NGP_CORE_DIR}/biosHLE.c
+  ${BEETLE_NGP_CORE_DIR}/bios.c
+  ${BEETLE_NGP_CORE_DIR}/flash.c
+  ${BEETLE_NGP_CORE_DIR}/dma.c
+  ${BEETLE_NGP_CORE_DIR}/gfx.c
+  ${BEETLE_NGP_CORE_DIR}/interrupt.c
+  ${BEETLE_NGP_CORE_DIR}/mem.c
+  ${BEETLE_NGP_CORE_DIR}/rom.c
+  ${BEETLE_NGP_CORE_DIR}/system.c
+  ${BEETLE_NGP_CORE_DIR}/rtc.c
+  ${BEETLE_NGP_CORE_DIR}/Z80_interface.c
+  ${BEETLE_NGP_CORE_DIR}/TLCS-900h/TLCS900h_interpret.c
+  ${BEETLE_NGP_CORE_DIR}/TLCS-900h/TLCS900h_interpret_dst.c
+  ${BEETLE_NGP_CORE_DIR}/TLCS-900h/TLCS900h_interpret_reg.c
+  ${BEETLE_NGP_CORE_DIR}/TLCS-900h/TLCS900h_interpret_single.c
+  ${BEETLE_NGP_CORE_DIR}/TLCS-900h/TLCS900h_interpret_src.c
+  ${BEETLE_NGP_CORE_DIR}/TLCS-900h/TLCS900h_registers.c
+  ${BEETLE_NGP_MEDNAFEN_DIR}/hw_cpu/z80-fuse/z80_ops.c
+  ${BEETLE_NGP_MEDNAFEN_DIR}/hw_cpu/z80-fuse/z80.c
+  ${BEETLE_NGP_MEDNAFEN_DIR}/state.c
+  ${BEETLE_NGP_MEDNAFEN_DIR}/settings.c
+  ${BEETLE_NGP_ROOT}/libretro.c
+)
+
+set(BEETLE_NGP_CPP_SOURCES
+  ${BEETLE_NGP_CORE_DIR}/sound.cpp
+  ${BEETLE_NGP_CORE_DIR}/T6W28_Apu.cpp
+  ${BEETLE_NGP_MEDNAFEN_DIR}/mempatcher.cpp
+  ${BEETLE_NGP_MEDNAFEN_DIR}/sound/Stereo_Buffer.cpp
+  ${BEETLE_NGP_MEDNAFEN_DIR}/sound/Blip_Buffer.cpp
+)
+
+set(BEETLE_NGP_SOURCES
+  ${BEETLE_NGP_C_SOURCES}
+  ${BEETLE_NGP_CPP_SOURCES}
+  ${LIBRETRO_COMMON_UTILITY_SOURCES}
+  ${LIBRETRO_SHIM_SOURCE}
+)
+
+add_executable(beetle_ngp_core ${BEETLE_NGP_SOURCES})
+target_compile_features(beetle_ngp_core PRIVATE c_std_99 cxx_std_17)
+target_include_directories(beetle_ngp_core PRIVATE
+  ${BEETLE_NGP_ROOT}
+  ${BEETLE_NGP_MEDNAFEN_DIR}
+  ${BEETLE_NGP_MEDNAFEN_DIR}/include
+  ${BEETLE_NGP_MEDNAFEN_DIR}/include/blip
+  ${BEETLE_NGP_MEDNAFEN_DIR}/intl
+  ${BEETLE_NGP_MEDNAFEN_DIR}/hw_cpu
+  ${BEETLE_NGP_MEDNAFEN_DIR}/hw_sound
+  ${BEETLE_NGP_MEDNAFEN_DIR}/hw_misc
+  ${LIBRETRO_COMMON_INCLUDE_DIR}
+)
+target_compile_definitions(beetle_ngp_core PRIVATE
+  __LIBRETRO__
+  FRONTEND_SUPPORTS_RGB565
+  USE_LIBRETRO_VFS
+  HAVE_STDINT_H
+  HAVE_INTTYPES_H
+  WANT_16BPP
+  MEDNAFEN_VERSION=\"0.9.26\"
+  MEDNAFEN_VERSION_NUMERIC=926
+)
+target_compile_options(beetle_ngp_core PRIVATE "-include${CMAKE_CURRENT_LIST_DIR}/shims/inline_stub.h")
+target_compile_options(beetle_ngp_core PRIVATE -fno-exceptions -fno-rtti)
+target_link_libraries(beetle_ngp_core PRIVATE m)
+configure_libretro_wasm_target(beetle_ngp_core beetle_ngp)
+target_link_options(beetle_ngp_core PRIVATE -Wl,--initial-memory=6291456)
